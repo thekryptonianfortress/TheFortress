@@ -1,0 +1,54 @@
+name: pager
+description: "Secure VoIP calling and messaging without a SIM carrier."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # WebRTC
+  flutter_webrtc: ^1.5.1
+
+  # Networking
+  socket_io_client: ^2.0.3+1
+  http: ^1.2.2
+
+  # Local storage
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  shared_preferences: ^2.3.2
+  flutter_secure_storage: ^9.2.2
+
+  # State management
+  provider: ^6.1.2
+
+  # Push notifications
+  firebase_core: ^3.3.0
+  firebase_messaging: ^15.1.0
+  flutter_local_notifications: ^17.2.2
+
+  # Crypto / identity
+  cryptography: ^2.7.0
+  uuid: ^4.5.1
+
+  # LAN discovery
+  multicast_dns: ^0.3.2+3
+
+  # Permissions
+  permission_handler: ^11.3.1
+
+  # Utils
+  intl: ^0.20.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

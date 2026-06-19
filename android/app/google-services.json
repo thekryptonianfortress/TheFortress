@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "413500439785",
+    "project_id": "pager-52c2d",
+    "storage_bucket": "pager-52c2d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:413500439785:android:0f543e586bbfaa489f0478",
+        "android_client_info": {
+          "package_name": "com.pager.pager"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBCuUV9VWLKha_kdr1IrcedlcwB36WxraQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
