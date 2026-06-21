@@ -3,7 +3,6 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../core/constants.dart';
-import '../core/crypto_utils.dart';
 import '../data/local/database.dart';
 import '../data/local/secure_storage.dart';
 import '../data/models/message.dart';
@@ -16,12 +15,12 @@ class MessagingService {
 
   MessagingService(this._signaling);
 
-  /// Send a message (plaintext, no encryption for now).
   Future<Message> sendMessage({
     required String recipientId,
     required String recipientVirtualId,
     required String recipientPublicKey,
     required String plaintext,
+    String? replyToId,
   }) async {
     final myId = await SecureStorage.getUserId() ?? '';
     final msgId = _uuid.v4();
@@ -34,6 +33,7 @@ class MessagingService {
       status: MessageStatus.pending,
       createdAt: DateTime.now(),
       isOutgoing: true,
+      replyToId: replyToId,
     );
 
     await _db.upsertMessage(msg);
@@ -44,6 +44,7 @@ class MessagingService {
         messageId: msgId,
         encryptedContent: plaintext,
         nonce: '',
+        replyToId: replyToId,
       );
     } else {
       await _db.queueMessage({
@@ -54,13 +55,40 @@ class MessagingService {
         'nonce': '',
         'recipient_virtual_id': recipientVirtualId,
         'created_at': DateTime.now().toIso8601String(),
+        'reply_to_id': replyToId,
       });
     }
 
     return msg;
   }
 
-  /// Return message content as-is (no decryption).
+  Future<void> editMessage({
+    required String messageId,
+    required String newContent,
+    required String recipientId,
+    required String recipientVirtualId,
+  }) async {
+    final editedAt = DateTime.now();
+    await _db.updateMessageContent(messageId, newContent, editedAt);
+    _signaling.emitEditMessage(
+      messageId: messageId,
+      newContent: newContent,
+      recipientVirtualId: recipientVirtualId,
+    );
+  }
+
+  Future<void> deleteMessage({
+    required String messageId,
+    required String recipientVirtualId,
+  }) async {
+    await _db.markMessageDeleted(messageId);
+    _signaling.emitDeleteMessage(
+      messageId: messageId,
+      recipientVirtualId: recipientVirtualId,
+    );
+  }
+
+  /// Return message content as-is (no encryption in current build).
   Future<String> decryptMessage({
     required String encryptedContent,
     required String nonce,
@@ -69,7 +97,6 @@ class MessagingService {
     return encryptedContent;
   }
 
-  /// Flush pending (offline-queued) messages when back online.
   Future<void> flushPendingMessages() async {
     if (!_signaling.isConnected) return;
     final pending = await _db.getPendingMessages();
@@ -79,6 +106,7 @@ class MessagingService {
         messageId: p['id'] as String,
         encryptedContent: p['encrypted_content'] as String,
         nonce: p['nonce'] as String,
+        replyToId: p['reply_to_id'] as String?,
       );
       await _db.deletePendingMessage(p['id'] as String);
       await _db.updateMessageStatus(p['id'] as String, MessageStatus.sent);
@@ -87,7 +115,6 @@ class MessagingService {
 
   static String _clearKey(String peerId) => 'chat_cleared_$peerId';
 
-  /// Record the time this chat was cleared so server messages before it are ignored.
   static Future<void> saveClearTimestamp(String peerId) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_clearKey(peerId), DateTime.now().toIso8601String());
@@ -99,9 +126,7 @@ class MessagingService {
     return s != null ? DateTime.tryParse(s) : null;
   }
 
-  /// Fetch message history from server and cache locally.
-  /// Messages older than the last clear are silently ignored.
-  Future<List<Message>> fetchMessages(String peerId) async {
+  Future<List<Message>> fetchMessages(String peerId, {DateTime? since}) async {
     final token = await SecureStorage.getToken();
     final myId = await SecureStorage.getUserId() ?? '';
     if (token == null) return _db.getMessages(myId, peerId);
@@ -109,15 +134,18 @@ class MessagingService {
     final clearedAt = await _clearTimestamp(peerId);
 
     try {
+      var url = '${AppConstants.serverBaseUrl}/messages/$peerId';
+      if (since != null) {
+        url += '?since=${Uri.encodeComponent(since.toUtc().toIso8601String())}';
+      }
       final res = await http.get(
-        Uri.parse('${AppConstants.serverBaseUrl}/messages/$peerId'),
+        Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (res.statusCode == 200) {
         final list = jsonDecode(res.body) as List;
         for (final json in list) {
           final msg = Message.fromJson(json as Map<String, dynamic>, myId);
-          // Skip messages that existed before this user cleared the chat
           if (clearedAt != null && !msg.createdAt.isAfter(clearedAt)) continue;
           await _db.upsertMessage(msg);
         }

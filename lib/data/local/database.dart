@@ -18,7 +18,7 @@ class LocalDatabase {
     final path = join(await getDatabasesPath(), AppConstants.dbName);
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -26,10 +26,16 @@ class LocalDatabase {
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      // Add recipient_virtual_id needed for offline message queuing
       await db.execute(
         'ALTER TABLE pending_messages ADD COLUMN recipient_virtual_id TEXT NOT NULL DEFAULT ""',
       );
+    }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE messages ADD COLUMN edited_at TEXT');
+      await db.execute(
+          'ALTER TABLE messages ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0');
+      await db.execute('ALTER TABLE messages ADD COLUMN reply_to_id TEXT');
+      await db.execute('ALTER TABLE pending_messages ADD COLUMN reply_to_id TEXT');
     }
   }
 
@@ -55,7 +61,10 @@ class LocalDatabase {
         nonce TEXT NOT NULL,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        is_outgoing INTEGER NOT NULL DEFAULT 0
+        edited_at TEXT,
+        is_outgoing INTEGER NOT NULL DEFAULT 0,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        reply_to_id TEXT
       )
     ''');
 
@@ -87,7 +96,8 @@ class LocalDatabase {
         recipient_virtual_id TEXT NOT NULL DEFAULT "",
         encrypted_content TEXT NOT NULL,
         nonce TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        reply_to_id TEXT
       )
     ''');
   }
@@ -95,16 +105,19 @@ class LocalDatabase {
   // ── Contacts ──────────────────────────────────────────────
   Future<void> upsertContact(Contact c) async {
     final d = await db;
-    await d.insert('contacts', c.toDbMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    await d.insert('contacts', c.toDbMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<Contact>> getContacts(String myUserId) async {
     final d = await db;
-    final rows = await d.query('contacts', where: 'user_id = ?', whereArgs: [myUserId]);
+    final rows =
+        await d.query('contacts', where: 'user_id = ?', whereArgs: [myUserId]);
     return rows.map(Contact.fromDbMap).toList();
   }
 
-  Future<Contact?> getContactByVirtualId(String myUserId, String virtualId) async {
+  Future<Contact?> getContactByVirtualId(
+      String myUserId, String virtualId) async {
     final d = await db;
     final rows = await d.query(
       'contacts',
@@ -122,14 +135,17 @@ class LocalDatabase {
   // ── Messages ───────────────────────────────────────────────
   Future<void> upsertMessage(Message m) async {
     final d = await db;
-    await d.insert('messages', m.toDbMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    await d.insert('messages', m.toDbMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  Future<List<Message>> getMessages(String myId, String peerId, {int limit = 50}) async {
+  Future<List<Message>> getMessages(String myId, String peerId,
+      {int limit = 100}) async {
     final d = await db;
     final rows = await d.query(
       'messages',
-      where: '(sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)',
+      where:
+          '(sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)',
       whereArgs: [myId, peerId, peerId, myId],
       orderBy: 'created_at ASC',
       limit: limit,
@@ -139,13 +155,35 @@ class LocalDatabase {
 
   Future<void> updateMessageStatus(String id, MessageStatus status) async {
     final d = await db;
-    await d.update('messages', {'status': status.name}, where: 'id = ?', whereArgs: [id]);
+    await d.update('messages', {'status': status.name},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> updateMessageContent(
+      String id, String newContent, DateTime editedAt) async {
+    final d = await db;
+    await d.update(
+      'messages',
+      {
+        'encrypted_content': newContent,
+        'edited_at': editedAt.toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> markMessageDeleted(String id) async {
+    final d = await db;
+    await d.update('messages', {'is_deleted': 1},
+        where: 'id = ?', whereArgs: [id]);
   }
 
   // ── Pending (offline queue) ────────────────────────────────
   Future<void> queueMessage(Map<String, dynamic> payload) async {
     final d = await db;
-    await d.insert('pending_messages', payload, conflictAlgorithm: ConflictAlgorithm.replace);
+    await d.insert('pending_messages', payload,
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<Map<String, dynamic>>> getPendingMessages() async {
@@ -162,7 +200,8 @@ class LocalDatabase {
     final d = await db;
     await d.delete(
       'messages',
-      where: '(sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)',
+      where:
+          '(sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)',
       whereArgs: [myId, peerId, peerId, myId],
     );
   }
@@ -170,12 +209,14 @@ class LocalDatabase {
   // ── Call Records ───────────────────────────────────────────
   Future<void> insertCallRecord(CallRecord r) async {
     final d = await db;
-    await d.insert('call_records', r.toDbMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    await d.insert('call_records', r.toDbMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<CallRecord>> getCallRecords({int limit = 50}) async {
     final d = await db;
-    final rows = await d.query('call_records', orderBy: 'started_at DESC', limit: limit);
+    final rows = await d.query('call_records',
+        orderBy: 'started_at DESC', limit: limit);
     return rows.map(CallRecord.fromDbMap).toList();
   }
 }

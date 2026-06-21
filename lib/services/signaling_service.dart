@@ -15,7 +15,12 @@ enum SignalingEvent {
   iceCandidate,
   newMessage,
   messageDelivered,
+  messageAck,
   presenceUpdate,
+  userTyping,
+  messagesRead,
+  messageEdited,
+  messageDeleted,
 }
 
 class SignalingMessage {
@@ -33,7 +38,7 @@ class SignalingService {
   bool get isConnected => _isConnected;
 
   Future<void> connect() async {
-    if (_socket != null) return; // already connected or connecting
+    if (_socket != null) return;
     final token = await SecureStorage.getToken();
     if (token == null) return;
 
@@ -61,49 +66,44 @@ class SignalingService {
       _emit(SignalingEvent.disconnected, {});
     });
 
-    _socket!.onConnectError((err) {
-      dev.log('[SignalingService] connect_error: $err');
-    });
-
-    _socket!.onError((err) {
-      dev.log('[SignalingService] error: $err');
-    });
+    _socket!.onConnectError((err) => dev.log('[SignalingService] connect_error: $err'));
+    _socket!.onError((err) => dev.log('[SignalingService] error: $err'));
 
     _socket!.on('call-offer-ack', (data) =>
         _emit(SignalingEvent.callOfferAck, Map<String, dynamic>.from(data as Map)));
-
     _socket!.on('incoming-call', (data) =>
         _emit(SignalingEvent.incomingCall, Map<String, dynamic>.from(data as Map)));
-
     _socket!.on('call-answered', (data) =>
         _emit(SignalingEvent.callAnswered, Map<String, dynamic>.from(data as Map)));
-
     _socket!.on('call-rejected', (data) =>
         _emit(SignalingEvent.callRejected, Map<String, dynamic>.from(data as Map)));
-
     _socket!.on('call-ended', (data) =>
         _emit(SignalingEvent.callEnded, Map<String, dynamic>.from(data as Map)));
-
     _socket!.on('ice-candidate', (data) =>
         _emit(SignalingEvent.iceCandidate, Map<String, dynamic>.from(data as Map)));
-
     _socket!.on('new-message', (data) =>
         _emit(SignalingEvent.newMessage, Map<String, dynamic>.from(data as Map)));
-
     _socket!.on('message-delivered', (data) =>
         _emit(SignalingEvent.messageDelivered, Map<String, dynamic>.from(data as Map)));
-
+    _socket!.on('message-ack', (data) =>
+        _emit(SignalingEvent.messageAck, Map<String, dynamic>.from(data as Map)));
     _socket!.on('presence-update', (data) =>
         _emit(SignalingEvent.presenceUpdate, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('user-typing', (data) =>
+        _emit(SignalingEvent.userTyping, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('messages-read', (data) =>
+        _emit(SignalingEvent.messagesRead, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('message-edited', (data) =>
+        _emit(SignalingEvent.messageEdited, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('message-deleted', (data) =>
+        _emit(SignalingEvent.messageDeleted, Map<String, dynamic>.from(data as Map)));
   }
 
   void _emit(SignalingEvent event, Map<String, dynamic> data) {
-    if (!_controller.isClosed) {
-      _controller.add(SignalingMessage(event, data));
-    }
+    if (!_controller.isClosed) _controller.add(SignalingMessage(event, data));
   }
 
-  // ── Outbound ───────────────────────────────────────────────
+  // ── Outbound: Calls ────────────────────────────────────────
 
   void sendCallOffer({
     required String targetVirtualId,
@@ -123,29 +123,66 @@ class SignalingService {
     _socket?.emit('call-answer', {'call_id': callId, 'sdp': sdp});
   }
 
-  void sendCallReject(String callId) {
-    _socket?.emit('call-reject', {'call_id': callId});
-  }
+  void sendCallReject(String callId) =>
+      _socket?.emit('call-reject', {'call_id': callId});
 
-  void sendCallEnd(String callId) {
-    _socket?.emit('call-end', {'call_id': callId});
-  }
+  void sendCallEnd(String callId) =>
+      _socket?.emit('call-end', {'call_id': callId});
 
-  void sendIceCandidate({required String callId, required Map<String, dynamic> candidate}) {
+  void sendIceCandidate(
+      {required String callId, required Map<String, dynamic> candidate}) {
     _socket?.emit('ice-candidate', {'call_id': callId, 'candidate': candidate});
   }
+
+  // ── Outbound: Messaging ────────────────────────────────────
 
   void sendMessage({
     required String recipientVirtualId,
     required String messageId,
     required String encryptedContent,
     required String nonce,
+    String? replyToId,
   }) {
     _socket?.emit('send-message', {
       'recipient_virtual_id': recipientVirtualId,
       'message_id': messageId,
       'encrypted_content': encryptedContent,
       'nonce': nonce,
+      if (replyToId != null) 'reply_to_id': replyToId,
+    });
+  }
+
+  void sendTyping({required String recipientVirtualId}) {
+    _socket?.emit('typing', {'recipient_virtual_id': recipientVirtualId});
+  }
+
+  void sendReadReceipt(
+      {required List<String> messageIds, required String senderId}) {
+    _socket?.emit('read-receipt', {
+      'message_ids': messageIds,
+      'sender_id': senderId,
+    });
+  }
+
+  void emitEditMessage({
+    required String messageId,
+    required String newContent,
+    required String recipientVirtualId,
+  }) {
+    _socket?.emit('edit-message', {
+      'message_id': messageId,
+      'new_content': newContent,
+      'recipient_virtual_id': recipientVirtualId,
+    });
+  }
+
+  void emitDeleteMessage({
+    required String messageId,
+    required String recipientVirtualId,
+  }) {
+    _socket?.emit('delete-message', {
+      'message_id': messageId,
+      'recipient_virtual_id': recipientVirtualId,
     });
   }
 

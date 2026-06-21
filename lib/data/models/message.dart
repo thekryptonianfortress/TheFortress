@@ -6,10 +6,13 @@ class Message {
   final String recipientId;
   final String encryptedContent;
   final String nonce;
-  final String? decryptedContent; // populated after decryption, not stored
+  final String? decryptedContent;
   final MessageStatus status;
   final DateTime createdAt;
+  final DateTime? editedAt;
   final bool isOutgoing;
+  final bool isDeleted;
+  final String? replyToId;
 
   const Message({
     required this.id,
@@ -20,19 +23,32 @@ class Message {
     this.decryptedContent,
     required this.status,
     required this.createdAt,
+    this.editedAt,
     required this.isOutgoing,
+    this.isDeleted = false,
+    this.replyToId,
   });
 
-  Message copyWith({String? decryptedContent, MessageStatus? status}) => Message(
+  Message copyWith({
+    String? decryptedContent,
+    MessageStatus? status,
+    String? encryptedContent,
+    DateTime? editedAt,
+    bool? isDeleted,
+  }) =>
+      Message(
         id: id,
         senderId: senderId,
         recipientId: recipientId,
-        encryptedContent: encryptedContent,
+        encryptedContent: encryptedContent ?? this.encryptedContent,
         nonce: nonce,
         decryptedContent: decryptedContent ?? this.decryptedContent,
         status: status ?? this.status,
         createdAt: createdAt,
+        editedAt: editedAt ?? this.editedAt,
         isOutgoing: isOutgoing,
+        isDeleted: isDeleted ?? this.isDeleted,
+        replyToId: replyToId,
       );
 
   factory Message.fromJson(Map<String, dynamic> json, String myId) => Message(
@@ -40,10 +56,15 @@ class Message {
         senderId: json['sender_id'] as String,
         recipientId: json['recipient_id'] as String,
         encryptedContent: json['encrypted_content'] as String,
-        nonce: json['nonce'] as String,
+        nonce: json['nonce'] as String? ?? '',
         status: _statusFromString(json['status'] as String? ?? 'sent'),
         createdAt: DateTime.parse(json['created_at'] as String),
+        editedAt: json['edited_at'] != null
+            ? DateTime.tryParse(json['edited_at'] as String)
+            : null,
         isOutgoing: json['sender_id'] == myId,
+        isDeleted: (json['is_deleted'] as bool?) ?? false,
+        replyToId: json['reply_to_id'] as String?,
       );
 
   Map<String, dynamic> toDbMap() => {
@@ -54,7 +75,10 @@ class Message {
         'nonce': nonce,
         'status': status.name,
         'created_at': createdAt.toIso8601String(),
+        'edited_at': editedAt?.toIso8601String(),
         'is_outgoing': isOutgoing ? 1 : 0,
+        'is_deleted': isDeleted ? 1 : 0,
+        'reply_to_id': replyToId,
       };
 
   factory Message.fromDbMap(Map<String, dynamic> map) => Message(
@@ -65,9 +89,15 @@ class Message {
         nonce: map['nonce'] as String,
         status: _statusFromString(map['status'] as String),
         createdAt: DateTime.parse(map['created_at'] as String),
+        editedAt: map['edited_at'] != null
+            ? DateTime.tryParse(map['edited_at'] as String)
+            : null,
         isOutgoing: (map['is_outgoing'] as int) == 1,
+        isDeleted: (map['is_deleted'] as int? ?? 0) == 1,
+        replyToId: map['reply_to_id'] as String?,
       );
 
   static MessageStatus _statusFromString(String s) =>
-      MessageStatus.values.firstWhere((e) => e.name == s, orElse: () => MessageStatus.sent);
+      MessageStatus.values.firstWhere((e) => e.name == s,
+          orElse: () => MessageStatus.sent);
 }

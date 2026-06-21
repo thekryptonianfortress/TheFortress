@@ -4,7 +4,6 @@ const db = require('./db');
 // Map: userId -> socketId
 const onlineUsers = new Map();
 
-// Call ID uses '::' as separator so UUID hyphens don't break parsing
 function makeCallId(callerId, calleeId) {
   return `${callerId}::${calleeId}::${Date.now()}`;
 }
@@ -14,20 +13,14 @@ function parseCallId(callId) {
 }
 
 function setupSignaling(io) {
-  // Authenticate WebSocket connections via JWT
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
-    console.log(`[socket] auth attempt from ${socket.handshake.address} token=${token ? 'present' : 'missing'}`);
-    if (!token) {
-      console.log('[socket] rejected: no token');
-      return next(new Error('Unauthorized'));
-    }
+    if (!token) return next(new Error('Unauthorized'));
     try {
       const payload = jwt.verify(token, process.env.JWT_SECRET);
       socket.userId = payload.sub;
       next();
     } catch (err) {
-      console.log(`[socket] rejected: ${err.message}`);
       next(new Error('Invalid token'));
     }
   });
@@ -37,7 +30,6 @@ function setupSignaling(io) {
     onlineUsers.set(userId, socket.id);
     console.log(`[socket] connected userId=${userId} online=${onlineUsers.size}`);
 
-    // Update last_seen and broadcast presence
     await db.query('UPDATE users SET last_seen = NOW() WHERE id = $1', [userId]);
     broadcastPresence(io, userId, true);
 
@@ -46,16 +38,11 @@ function setupSignaling(io) {
     socket.on('call-offer', async (data) => {
       const { target_virtual_id, sdp, caller_username, caller_virtual_id } = data;
       const target = await getUserByVirtualId(target_virtual_id);
-      if (!target) {
-        console.log(`[call-offer] target not found: ${target_virtual_id}`);
-        return;
-      }
+      if (!target) return;
 
       const callId = makeCallId(userId, target.id);
       const targetSocketId = onlineUsers.get(target.id);
-      console.log(`[call-offer] from=${userId} to=${target.id} online=${!!targetSocketId} callId=${callId}`);
 
-      // Always echo call_id back to caller so they can end/track the call
       socket.emit('call-offer-ack', { call_id: callId, target_online: !!targetSocketId });
 
       if (targetSocketId) {
@@ -85,20 +72,14 @@ function setupSignaling(io) {
       const { call_id, sdp } = data;
       const { callerId } = parseCallId(call_id);
       const callerSocket = onlineUsers.get(callerId);
-      console.log(`[call-answer] callId=${call_id} callerId=${callerId} found=${!!callerSocket}`);
-      if (callerSocket) {
-        io.to(callerSocket).emit('call-answered', { call_id, sdp });
-      }
+      if (callerSocket) io.to(callerSocket).emit('call-answered', { call_id, sdp });
     });
 
     socket.on('call-reject', (data) => {
       const { call_id } = data;
       const { callerId } = parseCallId(call_id);
       const callerSocket = onlineUsers.get(callerId);
-      console.log(`[call-reject] callerId=${callerId} found=${!!callerSocket}`);
-      if (callerSocket) {
-        io.to(callerSocket).emit('call-rejected', { call_id });
-      }
+      if (callerSocket) io.to(callerSocket).emit('call-rejected', { call_id });
     });
 
     socket.on('call-end', (data) => {
@@ -115,32 +96,25 @@ function setupSignaling(io) {
       const { callerId, calleeId } = parseCallId(call_id);
       const peerId = callerId === userId ? calleeId : callerId;
       const peerSocket = onlineUsers.get(peerId);
-      if (peerSocket) {
-        io.to(peerSocket).emit('ice-candidate', { call_id, candidate });
-      }
+      if (peerSocket) io.to(peerSocket).emit('ice-candidate', { call_id, candidate });
     });
 
     // ── Messaging ──────────────────────────────────────────────
 
     socket.on('send-message', async (data) => {
-      const { recipient_virtual_id, message_id, encrypted_content, nonce } = data;
+      const { recipient_virtual_id, message_id, encrypted_content, nonce, reply_to_id } = data;
       const recipient = await getUserByVirtualId(recipient_virtual_id);
-      if (!recipient) {
-        console.log(`[send-message] recipient not found: ${recipient_virtual_id}`);
-        return;
-      }
+      if (!recipient) return;
 
       console.log(`[send-message] from=${userId} to=${recipient.id} msgId=${message_id}`);
 
-      // Persist message
       await db.query(
-        `INSERT INTO messages (id, sender_id, recipient_id, encrypted_content, nonce, status)
-         VALUES ($1, $2, $3, $4, $5, 'sent')
+        `INSERT INTO messages (id, sender_id, recipient_id, encrypted_content, nonce, status, reply_to_id)
+         VALUES ($1, $2, $3, $4, $5, 'sent', $6)
          ON CONFLICT DO NOTHING`,
-        [message_id, userId, recipient.id, encrypted_content, nonce]
+        [message_id, userId, recipient.id, encrypted_content, nonce, reply_to_id || null]
       );
 
-      // Get sender info for recipient
       const sender = await db.query(
         'SELECT virtual_id, username, public_key FROM users WHERE id = $1',
         [userId]
@@ -148,8 +122,13 @@ function setupSignaling(io) {
       const senderInfo = sender.rows[0];
 
       const recipientSocket = onlineUsers.get(recipient.id);
-      console.log(`[send-message] recipient online=${!!recipientSocket}`);
+      const status = recipientSocket ? 'delivered' : 'sent';
+
       if (recipientSocket) {
+        // Fetch created_at from DB to send accurate timestamp
+        const msgRow = await db.query('SELECT created_at FROM messages WHERE id = $1', [message_id]);
+        const createdAt = msgRow.rows[0]?.created_at?.toISOString() || new Date().toISOString();
+
         io.to(recipientSocket).emit('new-message', {
           message_id,
           sender_id: userId,
@@ -158,15 +137,88 @@ function setupSignaling(io) {
           sender_public_key: senderInfo.public_key,
           encrypted_content,
           nonce,
+          reply_to_id: reply_to_id || null,
+          created_at: createdAt,
         });
         await db.query("UPDATE messages SET status = 'delivered' WHERE id = $1", [message_id]);
-        socket.emit('message-delivered', { message_id, recipient_id: recipient.id });
       } else {
         sendPushNotification(recipient.fcm_token, {
           type: 'new_message',
           sender_username: senderInfo.username,
-          preview: 'New encrypted message',
+          preview: 'New message',
         });
+      }
+
+      // Ack back to sender with final status
+      socket.emit('message-ack', {
+        message_id,
+        recipient_id: recipient.id,
+        status,
+      });
+    });
+
+    socket.on('typing', async (data) => {
+      const { recipient_virtual_id } = data;
+      const recipient = await getUserByVirtualId(recipient_virtual_id);
+      if (!recipient) return;
+      const recipientSocket = onlineUsers.get(recipient.id);
+      if (recipientSocket) {
+        io.to(recipientSocket).emit('user-typing', { sender_id: userId });
+      }
+    });
+
+    socket.on('read-receipt', async (data) => {
+      const { message_ids, sender_id } = data;
+      if (!Array.isArray(message_ids) || message_ids.length === 0) return;
+      await db.query(
+        `UPDATE messages SET status = 'read' WHERE id = ANY($1) AND recipient_id = $2`,
+        [message_ids, userId]
+      );
+      const senderSocket = onlineUsers.get(sender_id);
+      if (senderSocket) {
+        io.to(senderSocket).emit('messages-read', {
+          message_ids,
+          reader_id: userId,
+        });
+      }
+    });
+
+    socket.on('edit-message', async (data) => {
+      const { message_id, new_content, recipient_virtual_id } = data;
+      const result = await db.query(
+        `UPDATE messages SET encrypted_content = $1, edited_at = NOW()
+         WHERE id = $2 AND sender_id = $3
+         RETURNING edited_at`,
+        [new_content, message_id, userId]
+      );
+      if (result.rowCount === 0) return;
+
+      const editedAt = result.rows[0].edited_at.toISOString();
+      const recipient = await getUserByVirtualId(recipient_virtual_id);
+      if (!recipient) return;
+      const recipientSocket = onlineUsers.get(recipient.id);
+      if (recipientSocket) {
+        io.to(recipientSocket).emit('message-edited', {
+          message_id,
+          new_content,
+          edited_at: editedAt,
+        });
+      }
+    });
+
+    socket.on('delete-message', async (data) => {
+      const { message_id, recipient_virtual_id } = data;
+      const result = await db.query(
+        `UPDATE messages SET is_deleted = true WHERE id = $1 AND sender_id = $2`,
+        [message_id, userId]
+      );
+      if (result.rowCount === 0) return;
+
+      const recipient = await getUserByVirtualId(recipient_virtual_id);
+      if (!recipient) return;
+      const recipientSocket = onlineUsers.get(recipient.id);
+      if (recipientSocket) {
+        io.to(recipientSocket).emit('message-deleted', { message_id });
       }
     });
 
