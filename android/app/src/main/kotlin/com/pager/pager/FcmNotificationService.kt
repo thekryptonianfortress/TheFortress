@@ -55,6 +55,11 @@ class FcmNotificationService : FirebaseMessagingService() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         val notifId = MainActivity.notifIdForSender(senderVirtualId)
 
+        // Accumulate badge count across messages from the same sender
+        val badgeCount = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            (nm.activeNotifications.find { it.id == notifId }?.notification?.number ?: 0) + 1
+        } else 1
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val soundUri = Uri.parse("android.resource://${packageName}/raw/fortress_alert")
             val audioAttr = AudioAttributes.Builder()
@@ -107,6 +112,7 @@ class FcmNotificationService : FirebaseMessagingService() {
                 .setStyle(NotificationCompat.BigTextStyle().bigText(preview))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setColor(Color.parseColor("#5288C1"))
+                .setNumber(badgeCount)
                 .setAutoCancel(true)
                 .setContentIntent(openPendingIntent)
                 .addAction(replyAction)

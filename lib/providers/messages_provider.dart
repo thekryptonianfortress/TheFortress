@@ -18,6 +18,7 @@ class MessagesProvider extends ChangeNotifier {
 
   final Map<String, List<Message>> _chats = {};
   final Map<String, int> _unreadCounts = {};
+  final Set<String> _loadedPeerIds = {}; // peers explicitly opened this session
   StreamSubscription<SignalingMessage>? _sub;
 
   String? _typingPeerId;
@@ -90,8 +91,11 @@ class MessagesProvider extends ChangeNotifier {
         case SignalingEvent.connected:
           await _messaging.flushPendingMessages();
           await _processPendingReplies();
-          // Refresh all open chats so status syncs after reconnection
-          for (final peerId in _chats.keys.toList()) {
+          // Only refresh chats that were explicitly opened this session.
+          // Seeded-only chats (_initFromLocalDb) are excluded to avoid
+          // pulling stale 'read' statuses from the server onto messages
+          // that are still in-flight.
+          for (final peerId in _loadedPeerIds.toList()) {
             await loadChat(peerId);
           }
 
@@ -203,6 +207,7 @@ class MessagesProvider extends ChangeNotifier {
   }
 
   Future<void> loadChat(String peerId) async {
+    _loadedPeerIds.add(peerId);
     final msgs = await _messaging.fetchMessages(peerId);
     final existing = {for (final m in (_chats[peerId] ?? [])) m.id: m};
     _chats[peerId] = msgs.map((m) {

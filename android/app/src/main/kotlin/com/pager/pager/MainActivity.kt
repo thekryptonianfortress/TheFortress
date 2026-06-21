@@ -105,6 +105,11 @@ class MainActivity : FlutterActivity() {
         // Unique ID per sender so notifications from different people stack
         val notifId = notifIdForSender(senderVirtualId)
 
+        // Accumulate badge count across messages from the same sender
+        val badgeCount = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            (nm.activeNotifications.find { it.id == notifId }?.notification?.number ?: 0) + 1
+        } else 1
+
         // Ensure the notification channel exists with custom sound
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val soundUri = Uri.parse(
@@ -160,6 +165,7 @@ class MainActivity : FlutterActivity() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(preview))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setColor(Color.parseColor("#5288C1"))
+            .setNumber(badgeCount)
             .setAutoCancel(true)
             .setContentIntent(openPendingIntent)
             .addAction(replyAction)
