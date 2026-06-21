@@ -147,8 +147,7 @@ class LocalDatabase {
   Future<List<Message>> getMessages(String myId, String peerId,
       {int limit = 100}) async {
     final d = await db;
-    // Fetch newest messages first so the limit always includes the most recent,
-    // then reverse to display in chronological (oldest-first) order.
+    // Fetch newest messages first so the limit always includes the most recent.
     final rows = await d.query(
       'messages',
       where:
@@ -157,7 +156,11 @@ class LocalDatabase {
       orderBy: 'created_at DESC',
       limit: limit,
     );
-    return rows.reversed.map(Message.fromDbMap).toList();
+    // Parse then sort by DateTime so timezone differences between locally-stored
+    // timestamps (local time) and server timestamps (UTC) are handled correctly.
+    final messages = rows.map(Message.fromDbMap).toList();
+    messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return messages;
   }
 
   Future<void> updateMessageStatus(String id, MessageStatus status) async {

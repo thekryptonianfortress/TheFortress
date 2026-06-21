@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../core/constants.dart';
 import '../data/local/database.dart';
@@ -113,25 +112,10 @@ class MessagingService {
     }
   }
 
-  static String _clearKey(String peerId) => 'chat_cleared_$peerId';
-
-  static Future<void> saveClearTimestamp(String peerId) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_clearKey(peerId), DateTime.now().toIso8601String());
-  }
-
-  static Future<DateTime?> _clearTimestamp(String peerId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final s = prefs.getString(_clearKey(peerId));
-    return s != null ? DateTime.tryParse(s) : null;
-  }
-
   Future<List<Message>> fetchMessages(String peerId, {DateTime? since}) async {
     final token = await SecureStorage.getToken();
     final myId = await SecureStorage.getUserId() ?? '';
     if (token == null) return _db.getMessages(myId, peerId);
-
-    final clearedAt = await _clearTimestamp(peerId);
 
     try {
       var url = '${AppConstants.serverBaseUrl}/messages/$peerId';
@@ -146,7 +130,6 @@ class MessagingService {
         final list = jsonDecode(res.body) as List;
         for (final json in list) {
           final msg = Message.fromJson(json as Map<String, dynamic>, myId);
-          if (clearedAt != null && !msg.createdAt.isAfter(clearedAt)) continue;
           await _db.upsertMessage(msg);
         }
       }
@@ -154,6 +137,19 @@ class MessagingService {
       // Offline — serve from cache
     }
     return _db.getMessages(myId, peerId);
+  }
+
+  /// Tells the server to hide all messages before NOW() for this user+peer pair.
+  /// Survives client reinstalls because the clear record lives on the server.
+  Future<void> clearChatOnServer(String peerId) async {
+    final token = await SecureStorage.getToken();
+    if (token == null) return;
+    try {
+      await http.delete(
+        Uri.parse('${AppConstants.serverBaseUrl}/messages/$peerId'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {}
   }
   /// Send a quick reply via virtual ID — used for notification inline replies.
   Future<void> sendMessageByVirtualId({

@@ -411,7 +411,7 @@ class MessagesProvider extends ChangeNotifier {
   }
 
   Future<void> clearChat(String peerId) async {
-    await MessagingService.saveClearTimestamp(peerId);
+    await _messaging.clearChatOnServer(peerId);
     final myId = await SecureStorage.getUserId() ?? '';
     await _db.clearChat(myId, peerId);
     _chats.remove(peerId);

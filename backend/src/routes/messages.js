@@ -6,7 +6,17 @@ const { getIo, getOnlineUsers } = require('../signaling');
 
 const router = express.Router();
 
-// GET /messages/:peerId  — fetch conversation history
+// Ensure server-side chat clear tracking table exists
+db.query(`
+  CREATE TABLE IF NOT EXISTS chat_clears (
+    user_id UUID NOT NULL,
+    peer_id UUID NOT NULL,
+    cleared_before TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, peer_id)
+  )
+`).catch(err => console.error('[chat_clears] init error:', err.message));
+
+// GET /messages/:peerId  — fetch conversation history (newest first)
 // ?since=ISO_TIMESTAMP  — only fetch messages after this time (for polling)
 // ?limit=N              — max messages (default 100, max 200)
 router.get('/:peerId', authenticate, async (req, res) => {
@@ -15,12 +25,17 @@ router.get('/:peerId', authenticate, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 100, 200);
     const since = req.query.since;
 
+    // Filter messages before the user's last clear (server-side, survives reinstalls)
     let query = `
       SELECT id, sender_id, recipient_id, encrypted_content, nonce, status,
              created_at, edited_at, is_deleted, reply_to_id, reactions
       FROM messages
-      WHERE (sender_id = $1 AND recipient_id = $2)
-         OR (sender_id = $2 AND recipient_id = $1)
+      WHERE ((sender_id = $1 AND recipient_id = $2)
+          OR (sender_id = $2 AND recipient_id = $1))
+        AND created_at > COALESCE(
+          (SELECT cleared_before FROM chat_clears WHERE user_id = $1 AND peer_id = $2),
+          '-infinity'::timestamptz
+        )
     `;
     const params = [req.userId, peerId];
 
@@ -29,14 +44,32 @@ router.get('/:peerId', authenticate, async (req, res) => {
       query += ` AND created_at > $${params.length}`;
     }
 
+    // DESC so the newest 100 are always returned (client re-sorts for display)
     params.push(limit);
-    query += ` ORDER BY created_at ASC LIMIT $${params.length}`;
+    query += ` ORDER BY created_at DESC LIMIT $${params.length}`;
 
     const result = await db.query(query, params);
     res.json(result.rows);
   } catch (err) {
     console.error('[messages GET]', err.message);
     res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+// DELETE /messages/:peerId — server-side chat clear (per-user, non-destructive)
+router.delete('/:peerId', authenticate, async (req, res) => {
+  try {
+    const { peerId } = req.params;
+    await db.query(
+      `INSERT INTO chat_clears (user_id, peer_id, cleared_before)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (user_id, peer_id) DO UPDATE SET cleared_before = NOW()`,
+      [req.userId, peerId]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[messages DELETE]', err.message);
+    res.status(500).json({ error: 'Failed to clear chat' });
   }
 });
 
