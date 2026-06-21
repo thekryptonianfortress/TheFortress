@@ -53,7 +53,7 @@ class FcmNotificationService : FirebaseMessagingService() {
         senderVirtualId: String,
     ) {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        val notifId = 2
+        val notifId = MainActivity.notifIdForSender(senderVirtualId)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val soundUri = Uri.parse("android.resource://${packageName}/raw/fortress_alert")

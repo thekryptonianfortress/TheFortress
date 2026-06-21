@@ -28,6 +28,28 @@ class MessagesProvider extends ChangeNotifier {
     _listenToSignaling();
     NotificationService.onMessageReply = _handleNotificationReply;
     _processPendingReplies();
+    _initUnreadCounts();
+  }
+
+  Future<void> _initUnreadCounts() async {
+    final myId = await SecureStorage.getUserId() ?? '';
+    if (myId.isEmpty) return;
+
+    final lastMessages = await _db.getLastMessages(myId);
+    final counts = await _db.getUnreadCounts(myId);
+
+    // Seed _chats with the last known message so contact tiles show a preview
+    // immediately on cold start (before WebSocket delivers new messages).
+    for (final entry in lastMessages.entries) {
+      if (!_chats.containsKey(entry.key)) {
+        final msg = entry.value;
+        _chats[entry.key] = [msg.copyWith(decryptedContent: msg.encryptedContent)];
+      }
+    }
+
+    if (counts.isNotEmpty) _unreadCounts.addAll(counts);
+
+    if (lastMessages.isNotEmpty || counts.isNotEmpty) notifyListeners();
   }
 
   List<Message> getChat(String peerId) => _chats[peerId] ?? [];

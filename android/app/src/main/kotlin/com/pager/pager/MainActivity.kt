@@ -21,9 +21,34 @@ class MainActivity : FlutterActivity() {
     private val notifChannel = "pager/notification"
     private var ringtone: Ringtone? = null
 
-    companion object {
-        const val MSG_CHANNEL_ID = "fortress_messages"
-        const val MSG_NOTIFICATION_ID = 2
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        storeNotificationIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val senderVirtualId = intent.getStringExtra("sender_virtual_id") ?: return
+        if (senderVirtualId.isNotEmpty()) {
+            // Persist so Flutter can reliably read it after resume
+            storeNotificationIntent(intent)
+            // Also notify Flutter directly if the engine is ready
+            flutterEngine?.dartExecutor?.binaryMessenger?.let { messenger ->
+                MethodChannel(messenger, notifChannel).invokeMethod("openChat", senderVirtualId)
+            }
+        }
+    }
+
+    private fun storeNotificationIntent(intent: Intent?) {
+        val senderVirtualId = intent?.getStringExtra("sender_virtual_id") ?: return
+        if (senderVirtualId.isNotEmpty()) {
+            // Cold-start: store for Flutter to read after init
+            getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+                .edit()
+                .putString("flutter.pending_open_chat", senderVirtualId)
+                .apply()
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -77,6 +102,9 @@ class MainActivity : FlutterActivity() {
     private fun showMessageNotification(senderName: String, preview: String, senderVirtualId: String) {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
+        // Unique ID per sender so notifications from different people stack
+        val notifId = notifIdForSender(senderVirtualId)
+
         // Ensure the notification channel exists with custom sound
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val soundUri = Uri.parse(
@@ -104,11 +132,11 @@ class MainActivity : FlutterActivity() {
         // PendingIntent → QuickReplyReceiver (handles reply natively, no app open)
         val replyIntent = Intent(this, QuickReplyReceiver::class.java).apply {
             action = QuickReplyReceiver.ACTION_QUICK_REPLY
-            putExtra(QuickReplyReceiver.EXTRA_NOTIFICATION_ID, MSG_NOTIFICATION_ID)
+            putExtra(QuickReplyReceiver.EXTRA_NOTIFICATION_ID, notifId)
             putExtra(QuickReplyReceiver.EXTRA_SENDER_VIRTUAL_ID, senderVirtualId)
         }
         val replyPendingIntent = PendingIntent.getBroadcast(
-            this, MSG_NOTIFICATION_ID, replyIntent,
+            this, notifId, replyIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         )
         val replyAction = NotificationCompat.Action.Builder(
@@ -121,7 +149,7 @@ class MainActivity : FlutterActivity() {
             putExtra("sender_virtual_id", senderVirtualId)
         }
         val openPendingIntent = PendingIntent.getActivity(
-            this, 0, openIntent,
+            this, notifId, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -137,6 +165,15 @@ class MainActivity : FlutterActivity() {
             .addAction(replyAction)
             .build()
 
-        nm.notify(MSG_NOTIFICATION_ID, notification)
+        nm.notify(notifId, notification)
+    }
+
+    companion object {
+        const val MSG_CHANNEL_ID = "fortress_messages"
+        const val MSG_NOTIFICATION_ID = 2 // kept for legacy; prefer notifIdForSender()
+
+        /** Stable notification ID derived from sender virtual ID (avoids collision with call ID 1). */
+        fun notifIdForSender(senderVirtualId: String): Int =
+            (senderVirtualId.hashCode() and 0x7FFFFFFF) % 9000 + 100
     }
 }

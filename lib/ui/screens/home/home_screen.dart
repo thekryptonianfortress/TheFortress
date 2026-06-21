@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../services/notification_service.dart';
 import '../../../core/theme.dart';
 import '../../../data/local/database.dart';
@@ -28,9 +29,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadCallHistory();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<ContactsProvider>().loadContacts();
-      _checkPendingNotificationChat();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await context.read<ContactsProvider>().loadContacts();
+      if (mounted) _checkPendingNotificationChat();
     });
   }
 
@@ -47,9 +48,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _checkPendingNotificationChat() {
-    final virtualId = NotificationService.pendingOpenChatVirtualId;
-    if (virtualId == null || !mounted) return;
+  Future<void> _checkPendingNotificationChat() async {
+    // Primary: set by NotificationService (init or MethodChannel handler)
+    String? virtualId = NotificationService.pendingOpenChatVirtualId;
+    if (virtualId == null) {
+      // Fallback: native onNewIntent wrote to SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      virtualId = prefs.getString('pending_open_chat');
+      if (virtualId != null && virtualId.isNotEmpty) {
+        await prefs.remove('pending_open_chat');
+      }
+    }
+    if (virtualId == null || virtualId.isEmpty || !mounted) return;
     NotificationService.clearPendingOpenChat();
     final contacts = context.read<ContactsProvider>().contacts;
     final contact = contacts.where((c) => c.virtualId == virtualId).firstOrNull;

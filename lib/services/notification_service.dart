@@ -83,6 +83,24 @@ class NotificationService {
     // When user taps notification with app in background (not killed)
     FirebaseMessaging.onMessageOpenedApp.listen((msg) => _handleFcmData(msg.data));
 
+    // Cold-start: read sender stored natively in FlutterSharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    final storedVirtualId = prefs.getString('pending_open_chat') ?? '';
+    if (storedVirtualId.isNotEmpty) {
+      pendingOpenChatVirtualId = storedVirtualId;
+      await prefs.remove('pending_open_chat');
+    }
+
+    // Background tap: native onNewIntent invokes 'openChat' on this channel
+    _nativeNotifChannel.setMethodCallHandler((call) async {
+      if (call.method == 'openChat') {
+        final virtualId = call.arguments as String? ?? '';
+        if (virtualId.isNotEmpty) {
+          pendingOpenChatVirtualId = virtualId;
+        }
+      }
+    });
+
     _initialized = true;
     dev.log('[NotificationService] initialized');
   }

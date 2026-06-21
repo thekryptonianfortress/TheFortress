@@ -38,6 +38,31 @@ function setupSignaling(io) {
     await db.query('UPDATE users SET last_seen = NOW() WHERE id = $1', [userId]);
     broadcastPresence(io, userId, true);
 
+    // Deliver any messages that arrived while this user was offline
+    const pendingRes = await db.query(
+      `SELECT m.id, m.sender_id, m.encrypted_content, m.nonce, m.reply_to_id, m.created_at,
+              u.virtual_id AS sender_virtual_id, u.username AS sender_username, u.public_key AS sender_public_key
+       FROM messages m
+       JOIN users u ON u.id = m.sender_id
+       WHERE m.recipient_id = $1 AND m.status = 'sent'
+       ORDER BY m.created_at ASC`,
+      [userId]
+    );
+    for (const msg of pendingRes.rows) {
+      socket.emit('new-message', {
+        message_id: msg.id,
+        sender_id: msg.sender_id,
+        sender_virtual_id: msg.sender_virtual_id,
+        sender_username: msg.sender_username,
+        sender_public_key: msg.sender_public_key,
+        encrypted_content: msg.encrypted_content,
+        nonce: msg.nonce || '',
+        reply_to_id: msg.reply_to_id || null,
+        created_at: msg.created_at.toISOString(),
+      });
+      await db.query("UPDATE messages SET status = 'delivered' WHERE id = $1", [msg.id]);
+    }
+
     // ── Call Signaling ─────────────────────────────────────────
 
     socket.on('call-offer', async (data) => {

@@ -222,6 +222,41 @@ class LocalDatabase {
     );
   }
 
+  /// Returns the most recent message per peer (for seeding the contact tile preview on startup).
+  Future<Map<String, Message>> getLastMessages(String myId) async {
+    final d = await db;
+    // Fetch recent messages ordered newest-first; take the first per peer in Dart
+    final rows = await d.query(
+      'messages',
+      where: 'sender_id = ? OR recipient_id = ?',
+      whereArgs: [myId, myId],
+      orderBy: 'created_at DESC',
+      limit: 500,
+    );
+    final Map<String, Message> result = {};
+    for (final row in rows) {
+      final msg = Message.fromDbMap(row);
+      final peerId = msg.senderId == myId ? msg.recipientId : msg.senderId;
+      result.putIfAbsent(peerId, () => msg);
+    }
+    return result;
+  }
+
+  /// Returns a map of senderId → unread count for all conversations.
+  Future<Map<String, int>> getUnreadCounts(String myId) async {
+    final d = await db;
+    final rows = await d.rawQuery(
+      '''
+      SELECT sender_id, COUNT(*) as cnt
+      FROM messages
+      WHERE recipient_id = ? AND is_outgoing = 0 AND status != 'read'
+      GROUP BY sender_id
+      ''',
+      [myId],
+    );
+    return {for (final r in rows) r['sender_id'] as String: r['cnt'] as int};
+  }
+
   // ── Call Records ───────────────────────────────────────────
   Future<void> insertCallRecord(CallRecord r) async {
     final d = await db;
