@@ -9,76 +9,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
 import 'services/notification_service.dart';
 
-/// FCM background message handler — called when the app is killed or backgrounded.
+// ignore_for_file: unused_import
+
+/// FCM background message handler — notification display is handled natively
+/// by FcmNotificationService (Kotlin) so inline reply works without a spinner.
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  final data = message.data;
-  final type = data['type'] ?? '';
-
-  final plugin = FlutterLocalNotificationsPlugin();
-  await plugin.initialize(
-    const InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-    ),
-    onDidReceiveBackgroundNotificationResponse: notificationBackgroundHandler,
-  );
-
-  if (type == 'new_message') {
-    final senderName = data['sender_username'] ?? 'New message';
-    final preview = data['preview'] ?? 'You have a new message';
-    final senderVirtualId = data['sender_virtual_id'] ?? '';
-
-    await plugin.show(
-      2,
-      senderName,
-      preview,
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          'fortress_messages',
-          'Messages',
-          importance: Importance.high,
-          priority: Priority.high,
-          playSound: true,
-          sound: const UriAndroidNotificationSound(
-              'android.resource://com.pager.pager/raw/fortress_alert'),
-          color: const Color(0xFF5288C1),
-          actions: [
-            const AndroidNotificationAction(
-              'msg_reply',
-              'Reply',
-              showsUserInterface: false,
-              cancelNotification: true,
-              inputs: [
-                AndroidNotificationActionInput(label: 'Reply…'),
-              ],
-            ),
-          ],
-        ),
-      ),
-      payload: jsonEncode({
-        'type': 'message',
-        'sender_virtual_id': senderVirtualId,
-      }),
-    );
-  } else if (type == 'incoming_call') {
-    final callerName = data['caller_username'] ?? 'Unknown';
-    await plugin.show(
-      1,
-      'Incoming Call',
-      '$callerName is calling…',
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'fortress_calls',
-          'Calls',
-          importance: Importance.max,
-          priority: Priority.max,
-          fullScreenIntent: true,
-          category: AndroidNotificationCategory.call,
-        ),
-      ),
-    );
-  }
+  // FcmNotificationService.kt shows the notification natively with QuickReplyReceiver.
 }
 
 /// Handles local notification actions when the app is backgrounded/killed.

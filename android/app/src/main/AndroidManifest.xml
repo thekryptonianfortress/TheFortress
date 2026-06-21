@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -48,11 +49,16 @@
             </intent-filter>
         </activity>
 
-        <!-- FCM background message handler -->
+        <!-- Native FCM handler — shows notifications with inline QuickReplyReceiver -->
+        <!-- Removes the plugin's FlutterFirebaseMessagingService to avoid duplicates;
+             FcmNotificationService extends it so Flutter foreground stream still works. -->
         <service
-            android:name="com.google.firebase.messaging.FirebaseMessagingService"
+            android:name="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService"
+            tools:node="remove" />
+        <service
+            android:name=".FcmNotificationService"
             android:exported="false">
-            <intent-filter>
+            <intent-filter android:priority="1">
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
