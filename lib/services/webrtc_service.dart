@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
@@ -12,12 +13,17 @@ class WebRTCService {
 
   RTCPeerConnection? _pc;
   MediaStream? _localStream;
+  MediaStream? _remoteStream;
   CallState _state = CallState.idle;
   String? _activeCallId;
   DateTime? _callStartTime;
 
   // Buffer ICE candidates until we have the real server-assigned call_id
   final List<Map<String, dynamic>> _pendingCandidates = [];
+
+  /// Called by CallProvider when the peer connection disconnects/fails so that
+  /// proper signaling (sendCallEnd) can be sent before cleaning up locally.
+  VoidCallback? onCallDisconnected;
 
   final _stateController = StreamController<CallState>.broadcast();
   Stream<CallState> get stateStream => _stateController.stream;
@@ -32,7 +38,15 @@ class WebRTCService {
     final expiry = prefs.getInt(AppConstants.iceServersCacheExpiryKey) ?? 0;
 
     if (cached != null && DateTime.now().millisecondsSinceEpoch < expiry) {
-      return List<Map<String, dynamic>>.from(jsonDecode(cached));
+      final list = jsonDecode(cached) as List;
+      return list.map((e) {
+        final map = Map<String, dynamic>.from(e as Map);
+        // Ensure 'urls' is List<String> not List<dynamic>
+        if (map['urls'] is List) {
+          map['urls'] = (map['urls'] as List).map((u) => u.toString()).toList();
+        }
+        return map;
+      }).toList();
     }
     return AppConstants.defaultIceServers;
   }
@@ -42,9 +56,16 @@ class WebRTCService {
     final config = {
       'iceServers': iceServers,
       'sdpSemantics': 'unified-plan',
+      'iceTransportPolicy': 'relay',
     };
 
     _pc = await createPeerConnection(config);
+
+    _pc!.onTrack = (event) {
+      if (event.streams.isNotEmpty) {
+        _remoteStream = event.streams.first;
+      }
+    };
 
     _pc!.onIceCandidate = (candidate) {
       final callId = _activeCallId;
@@ -67,7 +88,11 @@ class WebRTCService {
       if (_state == CallState.active &&
           (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
               state == RTCPeerConnectionState.RTCPeerConnectionStateFailed)) {
-        endCall();
+        if (onCallDisconnected != null) {
+          onCallDisconnected!();
+        } else {
+          endCall();
+        }
       }
     };
   }
@@ -155,10 +180,14 @@ class WebRTCService {
 
   void endCall() {
     _pendingCandidates.clear();
+    // Stop each track explicitly to release the microphone before disposing
+    _localStream?.getTracks().forEach((t) => t.stop());
+    _remoteStream?.getTracks().forEach((t) => t.stop());
     _pc?.close();
     _pc = null;
     _localStream?.dispose();
     _localStream = null;
+    _remoteStream = null;
     _activeCallId = null;
     _callStartTime = null;
     _setState(CallState.ended);

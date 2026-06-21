@@ -9,6 +9,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/signaling_service.dart';
+import '../../services/sync_service.dart';
 import '../../core/theme.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -22,6 +23,22 @@ class _SplashScreenState extends State<SplashScreen> {
   void initState() {
     super.initState();
     _checkAuth();
+  }
+
+  /// Pings the server with the stored token to check it's still valid.
+  Future<bool> _validateToken() async {
+    try {
+      final token = await SecureStorage.getToken();
+      if (token == null) return false;
+      final res = await http.get(
+        Uri.parse('${AppConstants.serverBaseUrl}/contacts'),
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 8));
+      return res.statusCode != 401;
+    } catch (_) {
+      // Network error — assume valid so offline use still works
+      return true;
+    }
   }
 
   /// Ensures the stored private key is valid (32 bytes). If not, regenerates
@@ -61,8 +78,19 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!mounted) return;
     final auth = context.read<AuthProvider>();
     if (auth.isAuthenticated) {
+      // Validate the stored token is accepted by the current server.
+      // If not (e.g. server changed / JWT secret rotated), force logout.
+      final valid = await _validateToken();
+      if (!valid) {
+        await context.read<AuthProvider>().logout();
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/login');
+        return;
+      }
       // Silently fix broken keypairs without requiring logout
       await _ensureValidKeypair();
+      // Pre-fetch TURN credentials so they're cached before any call starts
+      await SyncService().syncTurnCredentials().catchError((_) {});
       await context.read<SignalingService>().connect();
       // Fire-and-forget — don't block navigation on FCM
       Future(() async {
@@ -85,9 +113,9 @@ class _SplashScreenState extends State<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.wifi_calling_3_rounded, size: 72, color: AppTheme.primary),
+            Icon(Icons.shield_rounded, size: 72, color: AppTheme.primary),
             SizedBox(height: 16),
-            Text('Pager', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppTheme.onSurface)),
+            Text('The Fortress', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppTheme.onSurface)),
             SizedBox(height: 24),
             CircularProgressIndicator(color: AppTheme.primary),
           ],

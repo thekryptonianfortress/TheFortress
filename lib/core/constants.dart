@@ -4,9 +4,9 @@ class AppConstants {
 
   // Backend URLs — override with --dart-define=SERVER_URL=http://10.0.2.2:3000 for emulator
   static const String serverBaseUrl =
-      String.fromEnvironment('SERVER_URL', defaultValue: 'http://10.152.224.130:3000');
+      String.fromEnvironment('SERVER_URL', defaultValue: 'http://137.184.168.242:4000');
   static const String wsUrl =
-      String.fromEnvironment('SERVER_URL', defaultValue: 'http://10.152.224.130:3000');
+      String.fromEnvironment('SERVER_URL', defaultValue: 'http://137.184.168.242:4000');
 
   // STUN/TURN
   static const List<Map<String, dynamic>> defaultIceServers = [

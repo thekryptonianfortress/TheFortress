@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/contact.dart';
@@ -18,7 +19,7 @@ class LocalDatabase {
     final path = join(await getDatabasesPath(), AppConstants.dbName);
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -36,6 +37,9 @@ class LocalDatabase {
           'ALTER TABLE messages ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0');
       await db.execute('ALTER TABLE messages ADD COLUMN reply_to_id TEXT');
       await db.execute('ALTER TABLE pending_messages ADD COLUMN reply_to_id TEXT');
+    }
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE messages ADD COLUMN reactions TEXT');
     }
   }
 
@@ -64,7 +68,8 @@ class LocalDatabase {
         edited_at TEXT,
         is_outgoing INTEGER NOT NULL DEFAULT 0,
         is_deleted INTEGER NOT NULL DEFAULT 0,
-        reply_to_id TEXT
+        reply_to_id TEXT,
+        reactions TEXT
       )
     ''');
 
@@ -168,6 +173,17 @@ class LocalDatabase {
         'encrypted_content': newContent,
         'edited_at': editedAt.toIso8601String(),
       },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateMessageReactions(
+      String id, Map<String, List<String>> reactions) async {
+    final d = await db;
+    await d.update(
+      'messages',
+      {'reactions': reactions.isEmpty ? null : jsonEncode(reactions)},
       where: 'id = ?',
       whereArgs: [id],
     );

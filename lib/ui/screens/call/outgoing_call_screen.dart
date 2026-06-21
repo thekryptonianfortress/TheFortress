@@ -13,6 +13,8 @@ class OutgoingCallScreen extends StatefulWidget {
 }
 
 class _OutgoingCallScreenState extends State<OutgoingCallScreen> {
+  bool _navigating = false;
+
   @override
   void initState() {
     super.initState();
@@ -22,24 +24,35 @@ class _OutgoingCallScreenState extends State<OutgoingCallScreen> {
             targetVirtualId: widget.contact.virtualId,
             targetUsername: widget.contact.username,
           );
+      context.read<CallProvider>().addListener(_onStateChange);
     });
+  }
+
+  void _onStateChange() {
+    if (!mounted || _navigating) return;
+    final state = context.read<CallProvider>().callState;
+    if (state == CallState.active) {
+      _navigating = true;
+      context.read<CallProvider>().removeListener(_onStateChange);
+      Navigator.of(context).pushReplacementNamed('/call/active');
+    } else if (state == CallState.ended) {
+      _navigating = true;
+      context.read<CallProvider>().removeListener(_onStateChange);
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  void dispose() {
+    // Guard: remove listener if screen disposed before call transitions
+    try { context.read<CallProvider>().removeListener(_onStateChange); } catch (_) {}
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<CallProvider>(
       builder: (context, call, _) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          if (call.callState == CallState.active) {
-            Navigator.of(context).pushReplacementNamed('/call/active');
-          } else if (call.callState == CallState.ended) {
-            // Only pop on 'ended' — never on 'idle'.
-            // 'idle' is the initial state BEFORE the call starts; popping on it
-            // would dismiss the screen the moment the audio permission dialog closes.
-            Navigator.of(context).pop();
-          }
-        });
 
         return Scaffold(
           backgroundColor: AppTheme.surface,
@@ -82,7 +95,7 @@ class _OutgoingCallScreenState extends State<OutgoingCallScreen> {
                       GestureDetector(
                         onTap: () {
                           call.endCall();
-                          Navigator.of(context).pop();
+                          // _onStateChange handles navigation when state → ended
                         },
                         child: Container(
                           width: 72,

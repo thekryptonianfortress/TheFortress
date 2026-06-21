@@ -1,3 +1,4 @@
+import 'dart:convert';
 enum MessageStatus { pending, sent, delivered, read }
 
 class Message {
@@ -13,6 +14,8 @@ class Message {
   final bool isOutgoing;
   final bool isDeleted;
   final String? replyToId;
+  /// emoji → list of userIds who reacted
+  final Map<String, List<String>> reactions;
 
   const Message({
     required this.id,
@@ -27,6 +30,7 @@ class Message {
     required this.isOutgoing,
     this.isDeleted = false,
     this.replyToId,
+    this.reactions = const {},
   });
 
   Message copyWith({
@@ -35,6 +39,7 @@ class Message {
     String? encryptedContent,
     DateTime? editedAt,
     bool? isDeleted,
+    Map<String, List<String>>? reactions,
   }) =>
       Message(
         id: id,
@@ -49,6 +54,7 @@ class Message {
         isOutgoing: isOutgoing,
         isDeleted: isDeleted ?? this.isDeleted,
         replyToId: replyToId,
+        reactions: reactions ?? this.reactions,
       );
 
   factory Message.fromJson(Map<String, dynamic> json, String myId) => Message(
@@ -65,6 +71,7 @@ class Message {
         isOutgoing: json['sender_id'] == myId,
         isDeleted: (json['is_deleted'] as bool?) ?? false,
         replyToId: json['reply_to_id'] as String?,
+        reactions: _reactionsFromJson(json['reactions']),
       );
 
   Map<String, dynamic> toDbMap() => {
@@ -79,6 +86,7 @@ class Message {
         'is_outgoing': isOutgoing ? 1 : 0,
         'is_deleted': isDeleted ? 1 : 0,
         'reply_to_id': replyToId,
+        'reactions': _reactionsToJson(reactions),
       };
 
   factory Message.fromDbMap(Map<String, dynamic> map) => Message(
@@ -95,7 +103,19 @@ class Message {
         isOutgoing: (map['is_outgoing'] as int) == 1,
         isDeleted: (map['is_deleted'] as int? ?? 0) == 1,
         replyToId: map['reply_to_id'] as String?,
+        reactions: _reactionsFromJson(map['reactions']),
       );
+
+  static Map<String, List<String>> _reactionsFromJson(dynamic raw) {
+    if (raw == null) return {};
+    try {
+      final map = (raw is String) ? (jsonDecode(raw) as Map<String, dynamic>) : (raw as Map<String, dynamic>);
+      return map.map((k, v) => MapEntry(k, List<String>.from(v as List)));
+    } catch (_) { return {}; }
+  }
+
+  static String? _reactionsToJson(Map<String, List<String>> r) =>
+      r.isEmpty ? null : jsonEncode(r);
 
   static MessageStatus _statusFromString(String s) =>
       MessageStatus.values.firstWhere((e) => e.name == s,

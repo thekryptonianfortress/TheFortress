@@ -3,6 +3,10 @@ const db = require('./db');
 
 // Map: userId -> socketId
 const onlineUsers = new Map();
+let _io = null;
+
+function getIo() { return _io; }
+function getOnlineUsers() { return onlineUsers; }
 
 function makeCallId(callerId, calleeId) {
   return `${callerId}::${calleeId}::${Date.now()}`;
@@ -13,6 +17,7 @@ function parseCallId(callId) {
 }
 
 function setupSignaling(io) {
+  _io = io;
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('Unauthorized'));
@@ -142,10 +147,14 @@ function setupSignaling(io) {
         });
         await db.query("UPDATE messages SET status = 'delivered' WHERE id = $1", [message_id]);
       } else {
+        const preview = encrypted_content.length > 60
+          ? encrypted_content.substring(0, 60) + '…'
+          : encrypted_content;
         sendPushNotification(recipient.fcm_token, {
           type: 'new_message',
           sender_username: senderInfo.username,
-          preview: 'New message',
+          sender_virtual_id: senderInfo.virtual_id,
+          preview,
         });
       }
 
@@ -222,6 +231,40 @@ function setupSignaling(io) {
       }
     });
 
+    socket.on('add-reaction', async (data) => {
+      const { message_id, emoji, recipient_virtual_id } = data;
+      if (!message_id || !emoji) return;
+
+      // Load current reactions, toggle this user's reaction
+      const msgRes = await db.query('SELECT reactions, sender_id FROM messages WHERE id = $1', [message_id]);
+      if (msgRes.rows.length === 0) return;
+
+      let reactions = msgRes.rows[0].reactions || {};
+      if (typeof reactions === 'string') reactions = JSON.parse(reactions);
+
+      const users = reactions[emoji] || [];
+      const idx = users.indexOf(userId);
+      if (idx === -1) {
+        reactions[emoji] = [...users, userId];
+      } else {
+        // toggle off
+        reactions[emoji] = users.filter(u => u !== userId);
+        if (reactions[emoji].length === 0) delete reactions[emoji];
+      }
+
+      await db.query('UPDATE messages SET reactions = $1 WHERE id = $2', [JSON.stringify(reactions), message_id]);
+
+      const recipient = await getUserByVirtualId(recipient_virtual_id);
+      const payload = { message_id, reactions, reactor_id: userId };
+      // Notify recipient
+      if (recipient) {
+        const recipientSocket = onlineUsers.get(recipient.id);
+        if (recipientSocket) io.to(recipientSocket).emit('reaction-added', payload);
+      }
+      // Echo back to sender too
+      socket.emit('reaction-added', payload);
+    });
+
     // ── Disconnect ─────────────────────────────────────────────
 
     socket.on('disconnect', async () => {
@@ -259,4 +302,4 @@ async function sendPushNotification(fcmToken, data) {
   }
 }
 
-module.exports = { setupSignaling };
+module.exports = { setupSignaling, getIo, getOnlineUsers };

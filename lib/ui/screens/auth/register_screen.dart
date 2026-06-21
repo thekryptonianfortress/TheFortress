@@ -84,6 +84,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ElevatedButton(
             onPressed: () async {
               Navigator.of(context).pop();
+              context.read<SignalingService>().disconnect();
               await context.read<SignalingService>().connect();
               Future(() async {
                 try {

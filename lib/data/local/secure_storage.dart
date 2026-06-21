@@ -1,4 +1,5 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants.dart';
 
 class SecureStorage {
@@ -22,6 +23,11 @@ class SecureStorage {
       _storage.write(key: AppConstants.keyPrivateKey, value: privateKey),
       _storage.write(key: AppConstants.keyPublicKey, value: publicKey),
     ]);
+    // Mirror token + server URL to regular SharedPreferences so native Android
+    // code (QuickReplyReceiver) and background Dart isolates can read them.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('pager_auth_token', token);
+    await prefs.setString('pager_server_url', AppConstants.serverBaseUrl);
   }
 
   static Future<Map<String, String?>> getSession() async {

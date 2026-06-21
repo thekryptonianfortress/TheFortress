@@ -41,6 +41,8 @@ class SyncService {
     }
   }
 
+  Future<void> syncTurnCredentials() => _syncTurnCredentials();
+
   Future<void> _syncTurnCredentials() async {
     final token = await SecureStorage.getToken();
     if (token == null) return;

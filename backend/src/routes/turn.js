@@ -22,14 +22,11 @@ router.get('/', authenticate, async (req, res) => {
 
     const iceServers = [
       { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
       {
-        urls: `turn:${turnHost}:${turnPort}`,
-        username,
-        credential,
-      },
-      {
-        urls: `turns:${turnHost}:${parseInt(turnPort) + 1}`,
+        urls: [
+          `turn:${turnHost}:${turnPort}`,
+          `turn:${turnHost}:${turnPort}?transport=tcp`,
+        ],
         username,
         credential,
       },

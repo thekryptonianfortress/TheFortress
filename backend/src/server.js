@@ -20,14 +20,27 @@ const io = new Server(server, {
 });
 
 // Firebase Admin (for push notifications)
-// Place your serviceAccountKey.json in backend/
+// Supports two init strategies:
+//   1. serviceAccountKey.json file in backend/ (legacy)
+//   2. Environment variables FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL
 try {
-  const serviceAccount = require('../serviceAccountKey.json');
-  admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-  console.log('Firebase Admin initialized');
-} catch {
-  console.warn('serviceAccountKey.json not found — push notifications disabled');
-  admin.initializeApp(); // Dummy init
+  let credential;
+  if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+    credential = admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID || 'pager-52c2d',
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    });
+    admin.initializeApp({ credential });
+    console.log('Firebase Admin initialized via environment variables');
+  } else {
+    const serviceAccount = require('../serviceAccountKey.json');
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    console.log('Firebase Admin initialized via serviceAccountKey.json');
+  }
+} catch (e) {
+  console.warn('Firebase Admin init failed — push notifications disabled:', e.message);
+  try { admin.initializeApp(); } catch (_) {}
 }
 
 app.use(cors());

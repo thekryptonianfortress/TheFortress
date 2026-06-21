@@ -155,4 +155,21 @@ class MessagingService {
     }
     return _db.getMessages(myId, peerId);
   }
+  /// Send a quick reply via virtual ID — used for notification inline replies.
+  Future<void> sendMessageByVirtualId({
+    required String recipientVirtualId,
+    required String plaintext,
+  }) async {
+    final myId = await SecureStorage.getUserId() ?? '';
+    final contact = await _db.getContactByVirtualId(myId, recipientVirtualId);
+    if (contact == null) return;
+    await sendMessage(
+      recipientId: contact.contactId,
+      recipientVirtualId: recipientVirtualId,
+      recipientPublicKey: contact.publicKey,
+      plaintext: plaintext,
+    );
+  }
+
+
 }

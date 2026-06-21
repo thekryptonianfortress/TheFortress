@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as dev;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../data/local/database.dart';
 import '../data/local/secure_storage.dart';
 import '../data/models/message.dart';
 import '../services/messaging_service.dart';
+import '../services/notification_service.dart';
 import '../services/signaling_service.dart';
 
 class MessagesProvider extends ChangeNotifier {
@@ -13,17 +17,32 @@ class MessagesProvider extends ChangeNotifier {
   final _db = LocalDatabase.instance;
 
   final Map<String, List<Message>> _chats = {};
+  final Map<String, int> _unreadCounts = {};
   StreamSubscription<SignalingMessage>? _sub;
 
   String? _typingPeerId;
   Timer? _typingTimer;
+  String? _activeChatPeerId;
 
   MessagesProvider(this._messaging, this._signaling) {
     _listenToSignaling();
+    NotificationService.onMessageReply = _handleNotificationReply;
+    _processPendingReplies();
   }
 
   List<Message> getChat(String peerId) => _chats[peerId] ?? [];
   bool isTyping(String peerId) => _typingPeerId == peerId;
+  int getUnreadCount(String peerId) => _unreadCounts[peerId] ?? 0;
+
+  void setActiveChat(String peerId) {
+    _activeChatPeerId = peerId;
+    _unreadCounts[peerId] = 0;
+    notifyListeners();
+  }
+
+  void clearActiveChat() {
+    _activeChatPeerId = null;
+  }
 
   void _listenToSignaling() {
     _sub = _signaling.stream.listen((msg) async {
@@ -48,6 +67,11 @@ class MessagesProvider extends ChangeNotifier {
 
         case SignalingEvent.connected:
           await _messaging.flushPendingMessages();
+          await _processPendingReplies();
+          // Refresh all open chats so status syncs after reconnection
+          for (final peerId in _chats.keys.toList()) {
+            await loadChat(peerId);
+          }
 
         case SignalingEvent.userTyping:
           _typingPeerId = msg.data['sender_id'] as String;
@@ -79,6 +103,15 @@ class MessagesProvider extends ChangeNotifier {
           final msgId = msg.data['message_id'] as String;
           await _db.markMessageDeleted(msgId);
           _updateDeletedInCache(msgId);
+
+        case SignalingEvent.reactionAdded:
+          final msgId = msg.data['message_id'] as String;
+          final raw = msg.data['reactions'];
+          final reactions = (raw as Map<String, dynamic>).map(
+            (k, v) => MapEntry(k, List<String>.from(v as List)),
+          );
+          await _db.updateMessageReactions(msgId, reactions);
+          _updateReactionsInCache(msgId, reactions);
 
         default:
           break;
@@ -112,6 +145,37 @@ class MessagesProvider extends ChangeNotifier {
     final existing = _chats[senderId] ?? [];
     if (!existing.any((m) => m.id == msg.id)) {
       _chats[senderId] = [...existing, decrypted];
+
+      final isActiveSender = _activeChatPeerId == senderId;
+      final appState = SchedulerBinding.instance.lifecycleState;
+      final isBackground = appState == AppLifecycleState.paused ||
+          appState == AppLifecycleState.detached ||
+          appState == AppLifecycleState.hidden;
+
+      if (isBackground || !isActiveSender) {
+        // Increment unread badge
+        _unreadCounts[senderId] = (_unreadCounts[senderId] ?? 0) + 1;
+      }
+
+      // Immediately send read receipt if this chat is currently open
+      if (isActiveSender && !isBackground) {
+        await markMessagesRead(senderId);
+      }
+
+      if (isBackground) {
+        // Only show system notification when app is backgrounded
+        final senderName = data['sender_username'] as String? ?? 'New message';
+        final senderVirtualId = data['sender_virtual_id'] as String? ?? '';
+        final preview = msg.encryptedContent.length > 60
+            ? '${msg.encryptedContent.substring(0, 60)}…'
+            : msg.encryptedContent;
+        await NotificationService.showMessageNotification(
+          senderName: senderName,
+          preview: preview,
+          senderVirtualId: senderVirtualId,
+        );
+      }
+
       notifyListeners();
     }
   }
@@ -121,12 +185,29 @@ class MessagesProvider extends ChangeNotifier {
     final existing = {for (final m in (_chats[peerId] ?? [])) m.id: m};
     _chats[peerId] = msgs.map((m) {
       final cached = existing[m.id];
-      if (cached?.decryptedContent != null) {
-        return m.copyWith(decryptedContent: cached!.decryptedContent);
-      }
-      return m;
+      return m.copyWith(
+        decryptedContent: cached?.decryptedContent ?? m.decryptedContent,
+        reactions: (cached?.reactions.isNotEmpty == true)
+            ? cached!.reactions
+            : m.reactions,
+        // Never downgrade status — keep the highest known state
+        status: cached != null ? _maxStatus(m.status, cached.status) : m.status,
+      );
     }).toList();
+
+    // Recount unread so the badge is accurate after app restart
+    if (_activeChatPeerId != peerId) {
+      _unreadCounts[peerId] = _chats[peerId]!
+          .where((m) => !m.isOutgoing && m.status != MessageStatus.read)
+          .length;
+    }
+
     notifyListeners();
+  }
+
+  static MessageStatus _maxStatus(MessageStatus a, MessageStatus b) {
+    const order = MessageStatus.values; // pending, sent, delivered, read
+    return order.indexOf(a) >= order.indexOf(b) ? a : b;
   }
 
   Future<void> sendMessage({
@@ -189,6 +270,7 @@ class MessagesProvider extends ChangeNotifier {
     if (unread.isEmpty) return;
 
     final ids = unread.map((m) => m.id).toList();
+    _unreadCounts[peerId] = 0;
     _signaling.sendReadReceipt(messageIds: ids, senderId: peerId);
 
     for (final id in ids) {
@@ -239,6 +321,65 @@ class MessagesProvider extends ChangeNotifier {
         notifyListeners();
         break;
       }
+    }
+  }
+
+  Future<void> addReaction({
+    required String peerId,
+    required String messageId,
+    required String emoji,
+    required String recipientVirtualId,
+  }) {
+    _signaling.emitReaction(
+      messageId: messageId,
+      emoji: emoji,
+      recipientVirtualId: recipientVirtualId,
+    );
+    return Future.value();
+  }
+
+  void _updateReactionsInCache(
+      String msgId, Map<String, List<String>> reactions) {
+    for (final peerId in _chats.keys) {
+      final chat = _chats[peerId]!;
+      final idx = chat.indexWhere((m) => m.id == msgId);
+      if (idx != -1) {
+        _chats[peerId]![idx] = chat[idx].copyWith(reactions: reactions);
+        notifyListeners();
+        break;
+      }
+    }
+  }
+
+  Future<void> _processPendingReplies() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pending = prefs.getStringList('pending_notification_replies') ?? [];
+      if (pending.isEmpty) return;
+      await prefs.remove('pending_notification_replies');
+      for (final entry in pending) {
+        try {
+          final map = jsonDecode(entry) as Map<String, dynamic>;
+          final payload = jsonDecode(map['payload'] as String) as Map<String, dynamic>;
+          final virtualId = payload['sender_virtual_id'] as String? ?? '';
+          final reply = map['reply'] as String? ?? '';
+          if (virtualId.isNotEmpty && reply.isNotEmpty) {
+            await _handleNotificationReply(virtualId, reply);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _handleNotificationReply(
+      String senderVirtualId, String replyText) async {
+    try {
+      await _messaging.sendMessageByVirtualId(
+        recipientVirtualId: senderVirtualId,
+        plaintext: replyText,
+      );
+    } catch (e) {
+      dev.log('[MessagesProvider] notification reply error: $e');
     }
   }
 

@@ -21,6 +21,7 @@ enum SignalingEvent {
   messagesRead,
   messageEdited,
   messageDeleted,
+  reactionAdded,
 }
 
 class SignalingMessage {
@@ -97,6 +98,8 @@ class SignalingService {
         _emit(SignalingEvent.messageEdited, Map<String, dynamic>.from(data as Map)));
     _socket!.on('message-deleted', (data) =>
         _emit(SignalingEvent.messageDeleted, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('reaction-added', (data) =>
+        _emit(SignalingEvent.reactionAdded, Map<String, dynamic>.from(data as Map)));
   }
 
   void _emit(SignalingEvent event, Map<String, dynamic> data) {
@@ -182,6 +185,18 @@ class SignalingService {
   }) {
     _socket?.emit('delete-message', {
       'message_id': messageId,
+      'recipient_virtual_id': recipientVirtualId,
+    });
+  }
+
+  void emitReaction({
+    required String messageId,
+    required String emoji,
+    required String recipientVirtualId,
+  }) {
+    _socket?.emit('add-reaction', {
+      'message_id': messageId,
+      'emoji': emoji,
       'recipient_virtual_id': recipientVirtualId,
     });
   }

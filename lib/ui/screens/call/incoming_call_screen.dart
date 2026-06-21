@@ -3,14 +3,30 @@ import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
 import '../../../providers/call_provider.dart';
 
-class IncomingCallScreen extends StatelessWidget {
+class IncomingCallScreen extends StatefulWidget {
   const IncomingCallScreen({super.key});
+  @override
+  State<IncomingCallScreen> createState() => _IncomingCallScreenState();
+}
+
+class _IncomingCallScreenState extends State<IncomingCallScreen> {
+  // Prevent auto-pop from firing when we're intentionally navigating away
+  bool _answering = false;
 
   @override
   Widget build(BuildContext context) {
     final call = context.watch<CallProvider>();
     final info = call.incomingCall;
-    if (info == null) return const SizedBox.shrink();
+
+    // Caller cancelled / call ended — pop back automatically
+    if (info == null && !_answering) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).maybePop();
+      });
+      return const Scaffold(backgroundColor: AppTheme.surface);
+    }
+
+    if (info == null) return const Scaffold(backgroundColor: AppTheme.surface);
 
     return Scaffold(
       backgroundColor: AppTheme.surface,
@@ -56,8 +72,9 @@ class IncomingCallScreen extends StatelessWidget {
                     label: 'Answer',
                     color: AppTheme.accent,
                     onTap: () async {
+                      _answering = true;
                       await call.answerCall();
-                      if (context.mounted) {
+                      if (mounted) {
                         Navigator.pushReplacementNamed(context, '/call/active');
                       }
                     },

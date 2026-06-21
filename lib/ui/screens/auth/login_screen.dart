@@ -33,6 +33,7 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       if (!mounted) return;
       if (ok) {
+        context.read<SignalingService>().disconnect();
         await context.read<SignalingService>().connect();
         // Isolated — Firebase may not be configured; must never block navigation
         Future(() async {
