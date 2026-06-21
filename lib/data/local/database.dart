@@ -147,15 +147,17 @@ class LocalDatabase {
   Future<List<Message>> getMessages(String myId, String peerId,
       {int limit = 100}) async {
     final d = await db;
+    // Fetch newest messages first so the limit always includes the most recent,
+    // then reverse to display in chronological (oldest-first) order.
     final rows = await d.query(
       'messages',
       where:
           '(sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)',
       whereArgs: [myId, peerId, peerId, myId],
-      orderBy: 'created_at ASC',
+      orderBy: 'created_at DESC',
       limit: limit,
     );
-    return rows.map(Message.fromDbMap).toList();
+    return rows.reversed.map(Message.fromDbMap).toList();
   }
 
   Future<void> updateMessageStatus(String id, MessageStatus status) async {
