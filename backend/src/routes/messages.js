@@ -68,7 +68,7 @@ router.post('/quick-reply', authenticate, async (req, res) => {
       [msgId, req.userId, recipient.id, content.trim()]
     );
 
-    // Deliver via WebSocket if recipient is currently online
+    // Deliver via WebSocket if recipient is currently online, otherwise FCM push
     const io = getIo();
     const onlineUsers = getOnlineUsers();
     const recipientSocketId = onlineUsers.get(recipient.id);
@@ -87,6 +87,30 @@ router.post('/quick-reply', authenticate, async (req, res) => {
         created_at: createdAt,
       });
       await db.query("UPDATE messages SET status = 'delivered' WHERE id = $1", [msgId]);
+    } else {
+      // Recipient has killed the app — wake them via FCM
+      const fcmRes = await db.query('SELECT fcm_token FROM users WHERE id = $1', [recipient.id]);
+      const fcmToken = fcmRes.rows[0]?.fcm_token;
+      if (fcmToken) {
+        const preview = content.trim().length > 60
+          ? content.trim().substring(0, 60) + '…'
+          : content.trim();
+        const admin = require('firebase-admin');
+        try {
+          await admin.messaging().send({
+            token: fcmToken,
+            data: {
+              type: 'new_message',
+              sender_username: sender.username,
+              sender_virtual_id: sender.virtual_id,
+              preview,
+            },
+            android: { priority: 'high' },
+          });
+        } catch (e) {
+          console.error('[quick-reply] FCM error:', e.message);
+        }
+      }
     }
 
     res.json({ ok: true, message_id: msgId });
