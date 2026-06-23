@@ -8,6 +8,7 @@ import '../../data/models/message.dart';
 import '../../services/media_service.dart';
 import '../screens/media/photo_view_screen.dart';
 import '../screens/media/video_player_screen.dart';
+import 'voice_note_player.dart';
 
 class MessageBubble extends StatefulWidget {
   final Message message;
@@ -482,6 +483,18 @@ class _MessageBubbleState extends State<MessageBubble>
           url: url,
           filename: filename,
           size: msg.attachmentSize,
+        );
+      } else if (type == 'audio') {
+        // Effect id is encoded in attachmentName after '#', e.g. "voice_note.m4a#deep"
+        final effectId = filename.contains('#') ? filename.split('#').last : null;
+        attachmentWidget = Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: VoiceNotePlayer(
+            key: ValueKey(msg.id),
+            source: url,
+            effectId: effectId,
+            isOutgoing: isMe,
+          ),
         );
       } else {
         // Generic file — download with progress dialog

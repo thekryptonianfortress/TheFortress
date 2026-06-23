@@ -55,6 +55,16 @@ dependencies:
   video_player: ^2.9.2
   video_thumbnail: ^0.5.3
 
+  # Voice notes
+  record: 5.0.5
+  just_audio: ^0.9.39
+
+dependency_overrides:
+  # record_linux 0.7.2 doesn't implement startStream/hasPermission({request}) from record_platform_interface 1.5.0+
+  # Use local patched version that adds stub implementations
+  record_linux:
+    path: packages/record_linux_patched
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

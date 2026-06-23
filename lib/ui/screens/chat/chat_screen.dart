@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
+import 'package:record/record.dart';
 import '../../../core/theme.dart';
 import '../../../data/local/secure_storage.dart';
 import '../../../data/models/contact.dart';
@@ -18,6 +19,7 @@ import '../../../services/messaging_service.dart';
 import '../../../services/signaling_service.dart';
 import '../../widgets/message_bubble.dart';
 import '../../widgets/user_avatar.dart';
+import '../../widgets/voice_note_player.dart';
 
 class ChatScreen extends StatefulWidget {
   final Contact contact;
@@ -39,11 +41,20 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _pollTimer;
   DateTime? _lastTypingSent;
 
+  // Voice note recording
+  final _recorder = AudioRecorder();
+  bool _hasText = false;
+  bool _isRecording = false;
+  Duration _recordDuration = Duration.zero;
+  Timer? _recordTimer;
+  double _cancelSlide = 0;
+
   @override
   void initState() {
     super.initState();
     _msgService = MessagingService(context.read<SignalingService>());
     _scrollCtrl.addListener(_onScroll);
+    _ctrl.addListener(_onTextFieldChanged);
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       context.read<MessagesProvider>().setActiveChat(widget.contact.contactId);
@@ -568,9 +579,120 @@ class _ChatScreenState extends State<ChatScreen> {
         .showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 
+  // ── Voice note recording ─────────────────────────────────
+
+  void _onTextFieldChanged() {
+    final hasText = _ctrl.text.isNotEmpty;
+    if (hasText != _hasText) setState(() => _hasText = hasText);
+  }
+
+  String _fmtRecordDuration(Duration d) {
+    final m = d.inMinutes.toString();
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  Future<void> _startRecording() async {
+    final hasPermission = await _recorder.hasPermission();
+    if (!hasPermission) {
+      if (mounted) _showError('Microphone permission required for voice notes');
+      return;
+    }
+    final dir = await getTemporaryDirectory();
+    final path =
+        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    try {
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 64000,
+          sampleRate: 44100,
+        ),
+        path: path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _isRecording = true;
+        _recordDuration = Duration.zero;
+        _cancelSlide = 0;
+      });
+      _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _recordDuration += const Duration(seconds: 1));
+      });
+    } catch (e) {
+      if (mounted) _showError('Could not start recording: $e');
+    }
+  }
+
+  Future<void> _stopRecording() async {
+    if (!_isRecording) return;
+    _recordTimer?.cancel();
+    final path = await _recorder.stop();
+    final duration = _recordDuration;
+    if (mounted) setState(() { _isRecording = false; _cancelSlide = 0; });
+    if (path != null && duration.inSeconds >= 1 && mounted) {
+      _showVoiceNotePreview(path);
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    if (!_isRecording) return;
+    _recordTimer?.cancel();
+    await _recorder.cancel();
+    if (mounted) setState(() { _isRecording = false; _cancelSlide = 0; });
+  }
+
+  void _showVoiceNotePreview(String path) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _VoiceNotePreviewSheet(
+        path: path,
+        onSend: (effectId) => _uploadAndSendVoiceNote(path, effectId),
+      ),
+    );
+  }
+
+  Future<void> _uploadAndSendVoiceNote(String path, String? effectId) async {
+    setState(() => _uploading = true);
+    try {
+      final token = await SecureStorage.getToken() ?? '';
+      final file = File(path);
+      final meta = await MediaService.upload(file, token);
+      if (!mounted) return;
+      final freshContact =
+          context.read<ContactsProvider>().getById(widget.contact.contactId);
+      final recipientPublicKey =
+          freshContact?.publicKey ?? widget.contact.publicKey;
+      final effectiveName =
+          (effectId != null && effectId != 'normal')
+              ? 'voice_note.m4a#$effectId'
+              : 'voice_note.m4a';
+      await context.read<MessagesProvider>().sendMessage(
+            recipientId: widget.contact.contactId,
+            recipientVirtualId: widget.contact.virtualId,
+            recipientPublicKey: recipientPublicKey,
+            plaintext: '',
+            attachmentUrl: meta.url,
+            attachmentType: 'audio',
+            attachmentName: effectiveName,
+            attachmentSize: meta.size,
+          );
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) _showError('Failed to send voice note: $e');
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _recordTimer?.cancel();
+    _recorder.dispose();
+    _ctrl.removeListener(_onTextFieldChanged);
     _ctrl.dispose();
     _scrollCtrl.removeListener(_onScroll);
     _scrollCtrl.dispose();
@@ -958,6 +1080,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildInputBar() {
     final isEditing = _editingMsg != null;
+    final showSend = _hasText || isEditing;
+
     return Container(
       color: AppTheme.inputBg,
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
@@ -978,95 +1102,158 @@ class _ChatScreenState extends State<ChatScreen> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Attachment button
-                if (!isEditing)
-                  GestureDetector(
-                    onTap: _uploading ? null : _showAttachmentPicker,
+                // ── Recording active: show recording indicator ──
+                if (_isRecording)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8, bottom: 11),
+                      child: Row(
+                        children: [
+                          const _PulsingRecordDot(),
+                          const SizedBox(width: 8),
+                          Text(
+                            _fmtRecordDuration(_recordDuration),
+                            style: const TextStyle(
+                              color: AppTheme.danger,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(Icons.arrow_back_ios_rounded,
+                              size: 13,
+                              color: AppTheme.muted.withValues(alpha: 0.5)),
+                          const SizedBox(width: 2),
+                          Text(
+                            'Slide to cancel',
+                            style: TextStyle(
+                              color: AppTheme.muted.withValues(alpha: 0.5),
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                        ],
+                      ),
+                    ),
+                  )
+                // ── Normal: attachment + text field ─────────────
+                else ...[
+                  if (!isEditing)
+                    GestureDetector(
+                      onTap: _uploading ? null : _showAttachmentPicker,
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.attach_file_rounded,
+                          color: _uploading
+                              ? AppTheme.muted.withValues(alpha: 0.4)
+                              : AppTheme.muted,
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                  Expanded(
                     child: Container(
-                      width: 44,
-                      height: 44,
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.attach_file_rounded,
-                        color: _uploading
-                            ? AppTheme.muted.withValues(alpha: 0.4)
-                            : AppTheme.muted,
-                        size: 22,
+                      constraints: const BoxConstraints(minHeight: 44),
+                      decoration: BoxDecoration(
+                        color: AppTheme.surface,
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: TextField(
+                              controller: _ctrl,
+                              textCapitalization: TextCapitalization.sentences,
+                              minLines: 1,
+                              maxLines: 5,
+                              onChanged: _onTextChanged,
+                              style: const TextStyle(
+                                  color: AppTheme.onSurface, fontSize: 15),
+                              decoration: const InputDecoration(
+                                hintText: 'Message',
+                                hintStyle: TextStyle(color: AppTheme.muted),
+                                contentPadding:
+                                    EdgeInsets.symmetric(vertical: 12),
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                filled: false,
+                              ),
+                              onSubmitted: (_) => _send(),
+                              contentInsertionConfiguration:
+                                  ContentInsertionConfiguration(
+                                allowedMimeTypes: const [
+                                  'image/gif',
+                                  'image/png',
+                                  'image/jpeg',
+                                  'image/webp',
+                                ],
+                                onContentInserted: _onKeyboardMediaInserted,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                       ),
                     ),
                   ),
-                // Text input
-                Expanded(
-                  child: Container(
-                    constraints: const BoxConstraints(minHeight: 44),
-                    decoration: BoxDecoration(
-                      color: AppTheme.surface,
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: TextField(
-                            controller: _ctrl,
-                            textCapitalization: TextCapitalization.sentences,
-                            minLines: 1,
-                            maxLines: 5,
-                            onChanged: _onTextChanged,
-                            style: const TextStyle(
-                                color: AppTheme.onSurface, fontSize: 15),
-                            decoration: const InputDecoration(
-                              hintText: 'Message',
-                              hintStyle: TextStyle(color: AppTheme.muted),
-                              contentPadding:
-                                  EdgeInsets.symmetric(vertical: 12),
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              filled: false,
-                            ),
-                            onSubmitted: (_) => _send(),
-                            // Accept GIFs and images from the keyboard's built-in
-                            // media picker (e.g. Gboard GIF button).
-                            contentInsertionConfiguration:
-                                ContentInsertionConfiguration(
-                              allowedMimeTypes: const [
-                                'image/gif',
-                                'image/png',
-                                'image/jpeg',
-                                'image/webp',
-                              ],
-                              onContentInserted: _onKeyboardMediaInserted,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                    ),
-                  ),
-                ),
+                ],
                 const SizedBox(width: 8),
-                // Send button
-                GestureDetector(
-                  onTap: _uploading ? null : _send,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: _uploading
-                          ? AppTheme.primary.withValues(alpha: 0.5)
-                          : AppTheme.primary,
-                      shape: BoxShape.circle,
+                // ── Send button (when typing / editing) ─────────
+                if (showSend)
+                  GestureDetector(
+                    onTap: _uploading ? null : _send,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: _uploading
+                            ? AppTheme.primary.withValues(alpha: 0.5)
+                            : AppTheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        isEditing ? Icons.check_rounded : Icons.send_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
                     ),
-                    child: Icon(
-                      isEditing ? Icons.check_rounded : Icons.send_rounded,
-                      color: Colors.white,
-                      size: 20,
+                  )
+                // ── Mic button (long-press to record) ───────────
+                else
+                  GestureDetector(
+                    onLongPressStart: (_) => _startRecording(),
+                    onLongPressMoveUpdate: (d) {
+                      final dx = d.offsetFromOrigin.dx;
+                      setState(() => _cancelSlide = dx);
+                      if (dx < -80 && _isRecording) _cancelRecording();
+                    },
+                    onLongPressEnd: (_) {
+                      if (_isRecording) _stopRecording();
+                    },
+                    onLongPressCancel: () {
+                      if (_isRecording) _cancelRecording();
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: _isRecording
+                            ? AppTheme.danger
+                            : AppTheme.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.mic_rounded,
+                          color: Colors.white, size: 22),
                     ),
                   ),
-                ),
               ],
             ),
           ],
@@ -1506,6 +1693,256 @@ class _ActionButton extends StatelessWidget {
               style: TextStyle(
                   color: color, fontSize: 12, fontWeight: FontWeight.w500)),
         ],
+      ),
+    );
+  }
+}
+
+// ── Pulsing red dot shown during recording ────────────────────
+
+class _PulsingRecordDot extends StatefulWidget {
+  const _PulsingRecordDot();
+
+  @override
+  State<_PulsingRecordDot> createState() => _PulsingRecordDotState();
+}
+
+class _PulsingRecordDotState extends State<_PulsingRecordDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 700))
+      ..repeat(reverse: true);
+    _anim = Tween<double>(begin: 0.35, end: 1.0).animate(_ctrl);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _anim,
+      child: Container(
+        width: 8,
+        height: 8,
+        decoration: const BoxDecoration(
+          color: AppTheme.danger,
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Voice note preview / send sheet ──────────────────────────
+
+class _VoiceNotePreviewSheet extends StatefulWidget {
+  final String path;
+  final void Function(String? effectId) onSend;
+
+  const _VoiceNotePreviewSheet({
+    required this.path,
+    required this.onSend,
+  });
+
+  @override
+  State<_VoiceNotePreviewSheet> createState() =>
+      _VoiceNotePreviewSheetState();
+}
+
+class _VoiceNotePreviewSheetState extends State<_VoiceNotePreviewSheet> {
+  String _effectId = 'normal';
+  bool _dubMode = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Drag handle
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: AppTheme.muted.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+
+            // Player preview
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppTheme.inputBg,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: VoiceNotePlayer(
+                key: ValueKey('preview_$_effectId'),
+                source: widget.path,
+                isFile: true,
+                effectId: _effectId,
+                isOutgoing: false,
+                autoLoad: true,
+              ),
+            ),
+
+            // Voice effect picker (shown when dub mode active)
+            if (_dubMode) ...[
+              const SizedBox(height: 16),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'VOICE EFFECT',
+                  style: TextStyle(
+                    color: AppTheme.primary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: kVoiceEffects.map((effect) {
+                    final selected = _effectId == effect.id;
+                    return GestureDetector(
+                      onTap: () => setState(() => _effectId = effect.id),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? AppTheme.primary.withValues(alpha: 0.18)
+                              : AppTheme.inputBg,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: selected
+                                ? AppTheme.primary
+                                : Colors.white.withValues(alpha: 0.1),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(effect.emoji,
+                                style: const TextStyle(fontSize: 18)),
+                            const SizedBox(width: 6),
+                            Text(
+                              effect.label,
+                              style: TextStyle(
+                                color: selected
+                                    ? AppTheme.primary
+                                    : AppTheme.onSurface,
+                                fontSize: 13,
+                                fontWeight: selected
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 20),
+
+            // Action buttons
+            Row(
+              children: [
+                // Discard
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: const Text('Discard'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.danger,
+                      side: BorderSide(
+                          color: AppTheme.danger.withValues(alpha: 0.5)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Dub voice toggle
+                OutlinedButton.icon(
+                  onPressed: () => setState(() => _dubMode = !_dubMode),
+                  icon: Icon(
+                    _dubMode
+                        ? Icons.mic_rounded
+                        : Icons.auto_fix_high_rounded,
+                    size: 18,
+                  ),
+                  label: Text(_dubMode ? 'Normal' : 'Dub Voice'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _dubMode
+                        ? AppTheme.primary
+                        : AppTheme.onSurface,
+                    side: BorderSide(
+                      color: _dubMode
+                          ? AppTheme.primary
+                          : AppTheme.muted.withValues(alpha: 0.4),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 12, horizontal: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Send
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      widget.onSend(
+                          _effectId == 'normal' ? null : _effectId);
+                    },
+                    icon: const Icon(Icons.send_rounded, size: 18),
+                    label: const Text('Send'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
