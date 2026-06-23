@@ -9,6 +9,7 @@ const authRoutes = require('./auth');
 const usersRoutes = require('./routes/users');
 const contactsRoutes = require('./routes/contacts');
 const messagesRoutes = require('./routes/messages');
+const mediaRoutes = require('./routes/media');
 const turnRoutes = require('./routes/turn');
 const { setupSignaling } = require('./signaling');
 
@@ -50,11 +51,15 @@ app.use((req, _, next) => { console.log(`[http] ${req.method} ${req.path} from $
 // Health check
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
 
+// Static file serving for uploaded media
+app.use('/uploads', express.static('/app/uploads'));
+
 // Routes
 app.use('/auth', authRoutes);
 app.use('/users', usersRoutes);
 app.use('/contacts', contactsRoutes);
 app.use('/messages', messagesRoutes);
+app.use('/media', mediaRoutes);
 app.use('/turn-credentials', turnRoutes);
 
 // WebSocket signaling

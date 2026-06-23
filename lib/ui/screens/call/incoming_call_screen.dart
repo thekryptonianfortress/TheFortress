@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
 import '../../../providers/call_provider.dart';
+import '../../../providers/contacts_provider.dart';
+import '../../widgets/user_avatar.dart';
 
 class IncomingCallScreen extends StatefulWidget {
   const IncomingCallScreen({super.key});
@@ -37,13 +39,13 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
             const SizedBox(height: 64),
             Column(
               children: [
-                CircleAvatar(
+                UserAvatar(
+                  username: info.callerUsername,
+                  avatarUrl: context.read<ContactsProvider>()
+                      .getByVirtualId(info.callerVirtualId)?.avatarUrl,
                   radius: 56,
                   backgroundColor: AppTheme.accent.withValues(alpha: 0.2),
-                  child: Text(
-                    info.callerUsername.isNotEmpty ? info.callerUsername[0].toUpperCase() : '?',
-                    style: const TextStyle(fontSize: 48, color: AppTheme.accent, fontWeight: FontWeight.bold),
-                  ),
+                  fontSize: 48,
                 ),
                 const SizedBox(height: 20),
                 Text(info.callerUsername, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),

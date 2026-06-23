@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme.dart';
 import '../../data/models/contact.dart';
 import '../../data/models/message.dart';
+import 'user_avatar.dart';
 
 class ContactTile extends StatelessWidget {
   final Contact contact;
@@ -25,9 +26,6 @@ class ContactTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatarColor = AppTheme.avatarColor(contact.username);
-    final initial =
-        contact.username.isNotEmpty ? contact.username[0].toUpperCase() : '?';
     final hasMessage = lastMessage != null;
     final timeLabel = hasMessage ? _formatTime(lastMessage!.createdAt) : null;
 
@@ -43,23 +41,10 @@ class ContactTile extends StatelessWidget {
             // ── Avatar ───────────────────────────────────────
             Stack(
               children: [
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: avatarColor,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: Text(
-                      initial,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
+                UserAvatar(
+                  username: contact.username,
+                  avatarUrl: contact.avatarUrl,
+                  radius: 26,
                 ),
                 if (contact.isOnline)
                   Positioned(

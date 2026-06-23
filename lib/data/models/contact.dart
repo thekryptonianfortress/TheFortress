@@ -7,6 +7,7 @@ class Contact {
   final String publicKey;
   final bool isOnline;
   final DateTime? lastSeen;
+  final String? avatarUrl;
 
   const Contact({
     required this.id,
@@ -17,9 +18,10 @@ class Contact {
     required this.publicKey,
     this.isOnline = false,
     this.lastSeen,
+    this.avatarUrl,
   });
 
-  Contact copyWith({bool? isOnline, DateTime? lastSeen}) => Contact(
+  Contact copyWith({bool? isOnline, DateTime? lastSeen, String? avatarUrl}) => Contact(
         id: id,
         userId: userId,
         contactId: contactId,
@@ -28,6 +30,7 @@ class Contact {
         publicKey: publicKey,
         isOnline: isOnline ?? this.isOnline,
         lastSeen: lastSeen ?? this.lastSeen,
+        avatarUrl: avatarUrl ?? this.avatarUrl,
       );
 
   factory Contact.fromJson(Map<String, dynamic> json) => Contact(
@@ -40,6 +43,7 @@ class Contact {
         lastSeen: json['last_seen'] != null
             ? DateTime.tryParse(json['last_seen'] as String)
             : null,
+        avatarUrl: json['avatar_url'] as String?,
       );
 
   Map<String, dynamic> toDbMap() => {
@@ -50,6 +54,7 @@ class Contact {
         'username': username,
         'public_key': publicKey,
         'last_seen': lastSeen?.toIso8601String(),
+        'avatar_url': avatarUrl,
       };
 
   factory Contact.fromDbMap(Map<String, dynamic> map) => Contact(
@@ -62,5 +67,6 @@ class Contact {
         lastSeen: map['last_seen'] != null
             ? DateTime.tryParse(map['last_seen'] as String)
             : null,
+        avatarUrl: map['avatar_url'] as String?,
       );
 }

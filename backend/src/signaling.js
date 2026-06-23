@@ -41,6 +41,7 @@ function setupSignaling(io) {
     // Deliver any messages that arrived while this user was offline
     const pendingRes = await db.query(
       `SELECT m.id, m.sender_id, m.encrypted_content, m.nonce, m.reply_to_id, m.created_at,
+              m.attachment_url, m.attachment_type, m.attachment_name, m.attachment_size,
               u.virtual_id AS sender_virtual_id, u.username AS sender_username, u.public_key AS sender_public_key
        FROM messages m
        JOIN users u ON u.id = m.sender_id
@@ -58,6 +59,10 @@ function setupSignaling(io) {
         encrypted_content: msg.encrypted_content,
         nonce: msg.nonce || '',
         reply_to_id: msg.reply_to_id || null,
+        attachment_url: msg.attachment_url || null,
+        attachment_type: msg.attachment_type || null,
+        attachment_name: msg.attachment_name || null,
+        attachment_size: msg.attachment_size || null,
         created_at: msg.created_at.toISOString(),
       });
       await db.query("UPDATE messages SET status = 'delivered' WHERE id = $1", [msg.id]);
@@ -132,17 +137,20 @@ function setupSignaling(io) {
     // ── Messaging ──────────────────────────────────────────────
 
     socket.on('send-message', async (data) => {
-      const { recipient_virtual_id, message_id, encrypted_content, nonce, reply_to_id } = data;
+      const { recipient_virtual_id, message_id, encrypted_content, nonce, reply_to_id,
+              attachment_url, attachment_type, attachment_name, attachment_size } = data;
       const recipient = await getUserByVirtualId(recipient_virtual_id);
       if (!recipient) return;
 
       console.log(`[send-message] from=${userId} to=${recipient.id} msgId=${message_id}`);
 
       await db.query(
-        `INSERT INTO messages (id, sender_id, recipient_id, encrypted_content, nonce, status, reply_to_id)
-         VALUES ($1, $2, $3, $4, $5, 'sent', $6)
+        `INSERT INTO messages (id, sender_id, recipient_id, encrypted_content, nonce, status, reply_to_id,
+                               attachment_url, attachment_type, attachment_name, attachment_size)
+         VALUES ($1, $2, $3, $4, $5, 'sent', $6, $7, $8, $9, $10)
          ON CONFLICT DO NOTHING`,
-        [message_id, userId, recipient.id, encrypted_content, nonce, reply_to_id || null]
+        [message_id, userId, recipient.id, encrypted_content, nonce, reply_to_id || null,
+         attachment_url || null, attachment_type || null, attachment_name || null, attachment_size || null]
       );
 
       const sender = await db.query(
@@ -168,6 +176,10 @@ function setupSignaling(io) {
           encrypted_content,
           nonce,
           reply_to_id: reply_to_id || null,
+          attachment_url: attachment_url || null,
+          attachment_type: attachment_type || null,
+          attachment_name: attachment_name || null,
+          attachment_size: attachment_size || null,
           created_at: createdAt,
         });
         await db.query("UPDATE messages SET status = 'delivered' WHERE id = $1", [message_id]);

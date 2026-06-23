@@ -14,6 +14,7 @@ class SecureStorage {
     required String username,
     required String privateKey,
     required String publicKey,
+    String? avatarUrl,
   }) async {
     await Future.wait([
       _storage.write(key: AppConstants.keyAuthToken, value: token),
@@ -22,6 +23,7 @@ class SecureStorage {
       _storage.write(key: AppConstants.keyUsername, value: username),
       _storage.write(key: AppConstants.keyPrivateKey, value: privateKey),
       _storage.write(key: AppConstants.keyPublicKey, value: publicKey),
+      _storage.write(key: 'avatar_url', value: avatarUrl),
     ]);
     // Mirror token + server URL to regular SharedPreferences so native Android
     // code (QuickReplyReceiver) and background Dart isolates can read them.
@@ -38,6 +40,7 @@ class SecureStorage {
       _storage.read(key: AppConstants.keyUsername),
       _storage.read(key: AppConstants.keyPrivateKey),
       _storage.read(key: AppConstants.keyPublicKey),
+      _storage.read(key: 'avatar_url'),
     ]);
     return {
       'token': results[0],
@@ -46,6 +49,7 @@ class SecureStorage {
       'username': results[3],
       'privateKey': results[4],
       'publicKey': results[5],
+      'avatarUrl': results[6],
     };
   }
 
@@ -55,6 +59,12 @@ class SecureStorage {
   static Future<String?> getUserId() => _storage.read(key: AppConstants.keyUserId);
   static Future<String?> getVirtualId() => _storage.read(key: AppConstants.keyVirtualId);
   static Future<String?> getUsername() => _storage.read(key: AppConstants.keyUsername);
+  static Future<String?> getAvatarUrl() => _storage.read(key: 'avatar_url');
+
+  static Future<void> saveAvatarUrl(String? url) =>
+      _storage.write(key: 'avatar_url', value: url);
+  static Future<void> saveUsername(String username) =>
+      _storage.write(key: AppConstants.keyUsername, value: username);
 
   static Future<void> clearSession() => _storage.deleteAll();
 }

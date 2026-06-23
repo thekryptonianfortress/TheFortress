@@ -97,4 +97,73 @@ router.put('/fcm-token', require('./middleware').authenticate, async (req, res) 
   }
 });
 
+// POST /auth/update-profile — update username and/or avatar_url
+router.post('/update-profile', require('./middleware').authenticate, async (req, res) => {
+  try {
+    const { username, avatar_url } = req.body;
+    if (!username && avatar_url === undefined) {
+      return res.status(400).json({ error: 'Nothing to update' });
+    }
+
+    if (username) {
+      const trimmed = username.trim();
+      if (trimmed.length < 2 || trimmed.length > 32) {
+        return res.status(400).json({ error: 'Username must be 2–32 characters' });
+      }
+      const existing = await db.query(
+        'SELECT id FROM users WHERE username = $1 AND id != $2',
+        [trimmed, req.userId]
+      );
+      if (existing.rows.length > 0) {
+        return res.status(409).json({ error: 'Username already taken' });
+      }
+    }
+
+    const fields = [];
+    const values = [];
+    if (username) { fields.push(`username = $${fields.length + 1}`); values.push(username.trim()); }
+    if (avatar_url !== undefined) { fields.push(`avatar_url = $${fields.length + 1}`); values.push(avatar_url); }
+    values.push(req.userId);
+
+    const result = await db.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${values.length}
+       RETURNING id, virtual_id, username, avatar_url`,
+      values
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[auth/update-profile]', err.message);
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// POST /auth/change-password — change password
+router.post('/change-password', require('./middleware').authenticate, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
+    if (new_password.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+
+    const result = await db.query(
+      'SELECT password_hash FROM users WHERE id = $1',
+      [req.userId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+    const valid = await bcrypt.compare(current_password, result.rows[0].password_hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    const newHash = await bcrypt.hash(new_password, 12);
+    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, req.userId]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[auth/change-password]', err.message);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
 module.exports = router;

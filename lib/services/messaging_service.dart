@@ -20,6 +20,10 @@ class MessagingService {
     required String recipientPublicKey,
     required String plaintext,
     String? replyToId,
+    String? attachmentUrl,
+    String? attachmentType,
+    String? attachmentName,
+    int? attachmentSize,
   }) async {
     final myId = await SecureStorage.getUserId() ?? '';
     final msgId = _uuid.v4();
@@ -33,6 +37,10 @@ class MessagingService {
       createdAt: DateTime.now(),
       isOutgoing: true,
       replyToId: replyToId,
+      attachmentUrl: attachmentUrl,
+      attachmentType: attachmentType,
+      attachmentName: attachmentName,
+      attachmentSize: attachmentSize,
     );
 
     await _db.upsertMessage(msg);
@@ -44,6 +52,10 @@ class MessagingService {
         encryptedContent: plaintext,
         nonce: '',
         replyToId: replyToId,
+        attachmentUrl: attachmentUrl,
+        attachmentType: attachmentType,
+        attachmentName: attachmentName,
+        attachmentSize: attachmentSize,
       );
     } else {
       await _db.queueMessage({
@@ -55,6 +67,10 @@ class MessagingService {
         'recipient_virtual_id': recipientVirtualId,
         'created_at': DateTime.now().toIso8601String(),
         'reply_to_id': replyToId,
+        if (attachmentUrl != null) 'attachment_url': attachmentUrl,
+        if (attachmentType != null) 'attachment_type': attachmentType,
+        if (attachmentName != null) 'attachment_name': attachmentName,
+        if (attachmentSize != null) 'attachment_size': attachmentSize,
       });
     }
 
@@ -106,6 +122,10 @@ class MessagingService {
         encryptedContent: p['encrypted_content'] as String,
         nonce: p['nonce'] as String,
         replyToId: p['reply_to_id'] as String?,
+        attachmentUrl: p['attachment_url'] as String?,
+        attachmentType: p['attachment_type'] as String?,
+        attachmentName: p['attachment_name'] as String?,
+        attachmentSize: p['attachment_size'] as int?,
       );
       await _db.deletePendingMessage(p['id'] as String);
       await _db.updateMessageStatus(p['id'] as String, MessageStatus.sent);

@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../services/notification_service.dart';
 import '../../../core/theme.dart';
 import '../../../data/local/database.dart';
 import '../../../data/models/call_record.dart';
-import '../../../providers/auth_provider.dart';
 import '../../../providers/call_provider.dart';
 import '../../../providers/contacts_provider.dart';
-import '../../../services/webrtc_service.dart';
+import '../../../services/webrtc_service.dart' show CallState;
 import '../contacts/contacts_screen.dart';
+import '../settings/settings_screen.dart';
+import '../../widgets/user_avatar.dart';
 import 'package:intl/intl.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -75,7 +75,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthProvider>();
     final call = context.watch<CallProvider>();
 
     if (_prevCallState != null &&
@@ -87,133 +86,52 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     _prevCallState = call.callState;
 
-    final initial = auth.username?.isNotEmpty == true
-        ? auth.username![0].toUpperCase()
-        : 'P';
-    final avatarColor = AppTheme.avatarColor(auth.username ?? 'P');
-
     return Scaffold(
       backgroundColor: AppTheme.background,
-      appBar: AppBar(
-        backgroundColor: AppTheme.inputBg,
-        elevation: 0,
-        title: Row(
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: const BoxDecoration(
-                color: AppTheme.primary,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              _tab == 0 ? 'Chats' : 'Calls',
-              style: const TextStyle(
-                color: AppTheme.onSurface,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          if (_tab == 0)
-            IconButton(
-              icon: const Icon(Icons.person_add_rounded,
-                  color: AppTheme.onSurface, size: 22),
-              onPressed: () =>
-                  Navigator.pushNamed(context, '/contacts/add'),
-              tooltip: 'Add contact',
-            ),
-          PopupMenuButton<void>(
-            color: AppTheme.surface,
-            icon: Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: avatarColor,
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: Text(
-                  initial,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
+      appBar: _tab == 2
+          ? null // Settings has its own AppBar via SliverAppBar
+          : AppBar(
+              backgroundColor: AppTheme.inputBg,
+              elevation: 0,
+              title: Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: AppTheme.primary,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _tab == 0 ? 'Chats' : 'Calls',
+                    style: const TextStyle(
+                      color: AppTheme.onSurface,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
+              actions: [
+                if (_tab == 0)
+                  IconButton(
+                    icon: const Icon(Icons.person_add_rounded,
+                        color: AppTheme.onSurface, size: 22),
+                    onPressed: () =>
+                        Navigator.pushNamed(context, '/contacts/add'),
+                    tooltip: 'Add contact',
+                  ),
+                const SizedBox(width: 4),
+              ],
             ),
-            itemBuilder: (_) => <PopupMenuEntry<void>>[
-              PopupMenuItem<void>(
-                enabled: false,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      auth.username ?? '',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.onSurface,
-                        fontSize: 15,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Text(
-                          auth.virtualId ?? '',
-                          style: const TextStyle(
-                              color: AppTheme.muted, fontSize: 12),
-                        ),
-                        const SizedBox(width: 6),
-                        GestureDetector(
-                          onTap: () {
-                            Clipboard.setData(
-                                ClipboardData(text: auth.virtualId ?? ''));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                  content: Text('Pager ID copied')),
-                            );
-                          },
-                          child: const Icon(Icons.copy_rounded,
-                              size: 13, color: AppTheme.muted),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem<void>(
-                onTap: () async {
-                  await auth.logout();
-                  if (context.mounted) {
-                    Navigator.pushReplacementNamed(context, '/login');
-                  }
-                },
-                child: const Row(
-                  children: [
-                    Icon(Icons.logout_rounded,
-                        size: 18, color: AppTheme.onSurface),
-                    SizedBox(width: 10),
-                    Text('Sign out'),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
       body: IndexedStack(
         index: _tab,
         children: [
           const ContactsScreen(),
           _CallHistoryTab(records: _callHistory),
+          const SettingsScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -235,6 +153,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             icon: Icon(Icons.call_outlined),
             selectedIcon: Icon(Icons.call_rounded),
             label: 'Calls',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings_rounded),
+            label: 'Settings',
           ),
         ],
       ),
@@ -303,10 +226,8 @@ class _CallHistoryTab extends StatelessWidget {
           iconData = Icons.call_received_rounded;
         }
 
-        final avatarColor = AppTheme.avatarColor(r.peerUsername);
-        final initial = r.peerUsername.isNotEmpty
-            ? r.peerUsername[0].toUpperCase()
-            : '?';
+        final peerAvatarUrl = context.read<ContactsProvider>()
+            .getByVirtualId(r.peerVirtualId)?.avatarUrl;
 
         return InkWell(
           onTap: () {},
@@ -317,23 +238,10 @@ class _CallHistoryTab extends StatelessWidget {
             child: Row(
               children: [
                 // Avatar
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: avatarColor,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: Text(
-                      initial,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
+                UserAvatar(
+                  username: r.peerUsername,
+                  avatarUrl: peerAvatarUrl,
+                  radius: 26,
                 ),
                 const SizedBox(width: 14),
                 // Info

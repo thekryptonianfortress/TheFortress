@@ -243,6 +243,10 @@ class MessagesProvider extends ChangeNotifier {
     required String recipientPublicKey,
     required String plaintext,
     String? replyToId,
+    String? attachmentUrl,
+    String? attachmentType,
+    String? attachmentName,
+    int? attachmentSize,
   }) async {
     final msg = await _messaging.sendMessage(
       recipientId: recipientId,
@@ -250,6 +254,10 @@ class MessagesProvider extends ChangeNotifier {
       recipientPublicKey: recipientPublicKey,
       plaintext: plaintext,
       replyToId: replyToId,
+      attachmentUrl: attachmentUrl,
+      attachmentType: attachmentType,
+      attachmentName: attachmentName,
+      attachmentSize: attachmentSize,
     );
 
     final shown =

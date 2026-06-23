@@ -24,6 +24,14 @@ class ContactsProvider extends ChangeNotifier {
     }
   }
 
+  Contact? getByVirtualId(String virtualId) {
+    try {
+      return _contacts.firstWhere((c) => c.virtualId == virtualId);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> loadContacts() async {
     final myId = await SecureStorage.getUserId();
     if (myId == null) return;

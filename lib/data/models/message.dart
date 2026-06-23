@@ -17,6 +17,12 @@ class Message {
   /// emoji → list of userIds who reacted
   final Map<String, List<String>> reactions;
 
+  // Attachment fields (null = plain text message)
+  final String? attachmentUrl;
+  final String? attachmentType; // 'image' | 'gif' | 'file'
+  final String? attachmentName;
+  final int? attachmentSize;
+
   const Message({
     required this.id,
     required this.senderId,
@@ -31,6 +37,10 @@ class Message {
     this.isDeleted = false,
     this.replyToId,
     this.reactions = const {},
+    this.attachmentUrl,
+    this.attachmentType,
+    this.attachmentName,
+    this.attachmentSize,
   });
 
   Message copyWith({
@@ -55,6 +65,10 @@ class Message {
         isDeleted: isDeleted ?? this.isDeleted,
         replyToId: replyToId,
         reactions: reactions ?? this.reactions,
+        attachmentUrl: attachmentUrl,
+        attachmentType: attachmentType,
+        attachmentName: attachmentName,
+        attachmentSize: attachmentSize,
       );
 
   factory Message.fromJson(Map<String, dynamic> json, String myId) => Message(
@@ -72,6 +86,10 @@ class Message {
         isDeleted: (json['is_deleted'] as bool?) ?? false,
         replyToId: json['reply_to_id'] as String?,
         reactions: _reactionsFromJson(json['reactions']),
+        attachmentUrl: json['attachment_url'] as String?,
+        attachmentType: json['attachment_type'] as String?,
+        attachmentName: json['attachment_name'] as String?,
+        attachmentSize: (json['attachment_size'] as num?)?.toInt(),
       );
 
   Map<String, dynamic> toDbMap() => {
@@ -87,6 +105,10 @@ class Message {
         'is_deleted': isDeleted ? 1 : 0,
         'reply_to_id': replyToId,
         'reactions': _reactionsToJson(reactions),
+        'attachment_url': attachmentUrl,
+        'attachment_type': attachmentType,
+        'attachment_name': attachmentName,
+        'attachment_size': attachmentSize,
       };
 
   factory Message.fromDbMap(Map<String, dynamic> map) => Message(
@@ -104,6 +126,10 @@ class Message {
         isDeleted: (map['is_deleted'] as int? ?? 0) == 1,
         replyToId: map['reply_to_id'] as String?,
         reactions: _reactionsFromJson(map['reactions']),
+        attachmentUrl: map['attachment_url'] as String?,
+        attachmentType: map['attachment_type'] as String?,
+        attachmentName: map['attachment_name'] as String?,
+        attachmentSize: map['attachment_size'] as int?,
       );
 
   static Map<String, List<String>> _reactionsFromJson(dynamic raw) {

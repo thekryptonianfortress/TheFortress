@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
 import '../../../providers/call_provider.dart';
+import '../../../providers/contacts_provider.dart';
 import '../../../services/webrtc_service.dart';
+import '../../widgets/user_avatar.dart';
 
 class ActiveCallScreen extends StatefulWidget {
   const ActiveCallScreen({super.key});
@@ -48,6 +50,8 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
         }
 
         final peerName = call.activePeerUsername ?? 'Unknown';
+        final peerAvatar = context.read<ContactsProvider>()
+            .getByVirtualId(call.activePeerVirtualId ?? '')?.avatarUrl;
 
         return Scaffold(
           backgroundColor: AppTheme.surface,
@@ -60,14 +64,12 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    CircleAvatar(
+                    UserAvatar(
+                      username: peerName,
+                      avatarUrl: peerAvatar,
                       radius: 56,
                       backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
-                      child: Text(
-                        peerName.isNotEmpty ? peerName[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                            fontSize: 48, color: AppTheme.primary, fontWeight: FontWeight.bold),
-                      ),
+                      fontSize: 48,
                     ),
                     const SizedBox(height: 20),
                     Text(peerName,

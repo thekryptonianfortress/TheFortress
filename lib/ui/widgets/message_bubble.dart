@@ -1,7 +1,13 @@
+import 'dart:typed_data';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:open_file/open_file.dart';
 import '../../core/theme.dart';
 import '../../data/models/message.dart';
+import '../../services/media_service.dart';
+import '../screens/media/photo_view_screen.dart';
+import '../screens/media/video_player_screen.dart';
 
 class MessageBubble extends StatefulWidget {
   final Message message;
@@ -413,21 +419,128 @@ class _MessageBubbleState extends State<MessageBubble>
 
   Widget _messageContent(BuildContext context, String text, String time,
       bool isEdited, bool isMe) {
-    final textColor = Colors.white;
     final metaColor = Colors.white.withValues(alpha: isMe ? 0.6 : 0.45);
+    final msg = widget.message;
+    final hasAttachment = msg.attachmentUrl != null;
+
+    Widget? attachmentWidget;
+    if (hasAttachment) {
+      final url = MediaService.fullUrl(msg.attachmentUrl!);
+      final type = msg.attachmentType ?? 'file';
+      final filename = msg.attachmentName ?? 'attachment';
+      final heroTag = 'media_${msg.id}';
+
+      if (type == 'image' || type == 'gif') {
+        attachmentWidget = GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PhotoViewScreen(
+                url: url,
+                heroTag: heroTag,
+                caption: filename,
+              ),
+            ),
+          ),
+          child: Hero(
+            tag: heroTag,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: CachedNetworkImage(
+                imageUrl: url,
+                width: 220,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => const SizedBox(
+                  width: 220,
+                  height: 160,
+                  child: Center(
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                ),
+                errorWidget: (_, __, ___) => const SizedBox(
+                  width: 220,
+                  height: 80,
+                  child: Center(
+                      child: Icon(Icons.broken_image_rounded,
+                          color: Colors.white54)),
+                ),
+              ),
+            ),
+          ),
+        );
+      } else if (type == 'video') {
+        attachmentWidget = _VideoThumbnailBubble(
+          url: url,
+          filename: filename,
+          size: msg.attachmentSize,
+        );
+      } else {
+        // Generic file — download with progress dialog
+        attachmentWidget = GestureDetector(
+          onTap: () => _openFile(context, url, filename),
+          child: Container(
+            width: 240,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.insert_drive_file_rounded,
+                    color: Colors.white70, size: 34),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        filename,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (msg.attachmentSize != null)
+                        Text(
+                          MediaService.formatSize(msg.attachmentSize!),
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.5),
+                              fontSize: 11),
+                        ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.download_rounded,
+                    color: Colors.white54, size: 20),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+
+    final hasText = text.trim().isNotEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          text,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 15,
-            height: 1.35,
+        if (attachmentWidget != null) ...[
+          attachmentWidget,
+          if (hasText) const SizedBox(height: 6),
+        ],
+        if (hasText)
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              height: 1.35,
+            ),
           ),
-        ),
         const SizedBox(height: 2),
         Row(
           mainAxisSize: MainAxisSize.min,
@@ -455,6 +568,14 @@ class _MessageBubbleState extends State<MessageBubble>
           ],
         ),
       ],
+    );
+  }
+
+  void _openFile(BuildContext context, String url, String filename) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _FileDownloadDialog(url: url, filename: filename),
     );
   }
 }
@@ -543,6 +664,185 @@ class _ReplyPreview extends StatelessWidget {
             ),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Video thumbnail bubble ────────────────────────────────────
+
+class _VideoThumbnailBubble extends StatefulWidget {
+  final String url;
+  final String filename;
+  final int? size;
+
+  const _VideoThumbnailBubble({
+    required this.url,
+    required this.filename,
+    this.size,
+  });
+
+  @override
+  State<_VideoThumbnailBubble> createState() => _VideoThumbnailBubbleState();
+}
+
+class _VideoThumbnailBubbleState extends State<_VideoThumbnailBubble> {
+  Uint8List? _thumb;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadThumb();
+  }
+
+  Future<void> _loadThumb() async {
+    final bytes = await MediaService.videoThumbnailBytes(widget.url);
+    if (mounted) setState(() { _thumb = bytes; _loaded = true; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              VideoPlayerScreen(url: widget.url, filename: widget.filename),
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Thumbnail or placeholder
+            SizedBox(
+              width: 240,
+              height: 160,
+              child: _loaded && _thumb != null
+                  ? Image.memory(_thumb!, width: 240, height: 160, fit: BoxFit.cover)
+                  : Container(
+                      color: Colors.black54,
+                      child: const Icon(Icons.videocam_rounded,
+                          color: Colors.white12, size: 72),
+                    ),
+            ),
+            // Play button overlay
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.6),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.play_arrow_rounded,
+                  color: Colors.white, size: 34),
+            ),
+            // Duration / size label bottom-right
+            if (widget.size != null)
+              Positioned(
+                bottom: 6,
+                right: 8,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    MediaService.formatSize(widget.size!),
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 10),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── File download dialog ──────────────────────────────────────
+
+class _FileDownloadDialog extends StatefulWidget {
+  final String url;
+  final String filename;
+
+  const _FileDownloadDialog({required this.url, required this.filename});
+
+  @override
+  State<_FileDownloadDialog> createState() => _FileDownloadDialogState();
+}
+
+class _FileDownloadDialogState extends State<_FileDownloadDialog> {
+  double _progress = 0;
+  bool _alreadyCached = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _download();
+  }
+
+  Future<void> _download() async {
+    try {
+      // Check cache before showing progress
+      final cached = await MediaService.isCached(widget.filename);
+      if (mounted && cached) setState(() => _alreadyCached = true);
+
+      final file = await MediaService.downloadFile(
+        widget.url,
+        widget.filename,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
+      if (!mounted) return;
+      Navigator.pop(context);
+      await OpenFile.open(file.path);
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Download failed: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E2C3A),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text(
+        widget.filename,
+        style: const TextStyle(
+            color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinearProgressIndicator(
+            value: _alreadyCached ? 1.0 : (_progress > 0 ? _progress : null),
+            backgroundColor: Colors.white12,
+            color: AppTheme.primary,
+            minHeight: 3,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _alreadyCached
+                ? 'Opening…'
+                : _progress > 0
+                    ? '${(_progress * 100).toStringAsFixed(0)}%'
+                    : 'Downloading…',
+            style: const TextStyle(color: Colors.white60, fontSize: 13),
           ),
         ],
       ),

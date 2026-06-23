@@ -19,7 +19,7 @@ class LocalDatabase {
     final path = join(await getDatabasesPath(), AppConstants.dbName);
     return openDatabase(
       path,
-      version: 4,
+      version: 6,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -41,6 +41,19 @@ class LocalDatabase {
     if (oldVersion < 4) {
       await db.execute('ALTER TABLE messages ADD COLUMN reactions TEXT');
     }
+    if (oldVersion < 5) {
+      await db.execute('ALTER TABLE messages ADD COLUMN attachment_url TEXT');
+      await db.execute('ALTER TABLE messages ADD COLUMN attachment_type TEXT');
+      await db.execute('ALTER TABLE messages ADD COLUMN attachment_name TEXT');
+      await db.execute('ALTER TABLE messages ADD COLUMN attachment_size INTEGER');
+      await db.execute('ALTER TABLE pending_messages ADD COLUMN attachment_url TEXT');
+      await db.execute('ALTER TABLE pending_messages ADD COLUMN attachment_type TEXT');
+      await db.execute('ALTER TABLE pending_messages ADD COLUMN attachment_name TEXT');
+      await db.execute('ALTER TABLE pending_messages ADD COLUMN attachment_size INTEGER');
+    }
+    if (oldVersion < 6) {
+      await db.execute('ALTER TABLE contacts ADD COLUMN avatar_url TEXT');
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -52,7 +65,8 @@ class LocalDatabase {
         virtual_id TEXT NOT NULL,
         username TEXT NOT NULL,
         public_key TEXT NOT NULL,
-        last_seen TEXT
+        last_seen TEXT,
+        avatar_url TEXT
       )
     ''');
 
@@ -69,7 +83,11 @@ class LocalDatabase {
         is_outgoing INTEGER NOT NULL DEFAULT 0,
         is_deleted INTEGER NOT NULL DEFAULT 0,
         reply_to_id TEXT,
-        reactions TEXT
+        reactions TEXT,
+        attachment_url TEXT,
+        attachment_type TEXT,
+        attachment_name TEXT,
+        attachment_size INTEGER
       )
     ''');
 
@@ -102,7 +120,11 @@ class LocalDatabase {
         encrypted_content TEXT NOT NULL,
         nonce TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        reply_to_id TEXT
+        reply_to_id TEXT,
+        attachment_url TEXT,
+        attachment_type TEXT,
+        attachment_name TEXT,
+        attachment_size INTEGER
       )
     ''');
   }

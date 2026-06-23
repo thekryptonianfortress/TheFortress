@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
 import '../../../data/models/contact.dart';
 import '../../../providers/call_provider.dart';
+import '../../widgets/user_avatar.dart';
 import '../../../services/webrtc_service.dart';
 
 class OutgoingCallScreen extends StatefulWidget {
@@ -63,16 +64,12 @@ class _OutgoingCallScreenState extends State<OutgoingCallScreen> {
                 const SizedBox(height: 48),
                 Column(
                   children: [
-                    CircleAvatar(
+                    UserAvatar(
+                      username: widget.contact.username,
+                      avatarUrl: widget.contact.avatarUrl,
                       radius: 56,
                       backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
-                      child: Text(
-                        widget.contact.username[0].toUpperCase(),
-                        style: const TextStyle(
-                            fontSize: 48,
-                            color: AppTheme.primary,
-                            fontWeight: FontWeight.bold),
-                      ),
+                      fontSize: 48,
                     ),
                     const SizedBox(height: 20),
                     Text(widget.contact.username,

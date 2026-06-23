@@ -28,7 +28,8 @@ router.get('/:peerId', authenticate, async (req, res) => {
     // Filter messages before the user's last clear (server-side, survives reinstalls)
     let query = `
       SELECT id, sender_id, recipient_id, encrypted_content, nonce, status,
-             created_at, edited_at, is_deleted, reply_to_id, reactions
+             created_at, edited_at, is_deleted, reply_to_id, reactions,
+             attachment_url, attachment_type, attachment_name, attachment_size
       FROM messages
       WHERE ((sender_id = $1 AND recipient_id = $2)
           OR (sender_id = $2 AND recipient_id = $1))

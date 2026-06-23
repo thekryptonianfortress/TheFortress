@@ -1,17 +1,23 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
+import '../../../data/local/secure_storage.dart';
 import '../../../data/models/contact.dart';
 import '../../../data/models/message.dart';
 import '../../../providers/contacts_provider.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/messages_provider.dart';
+import '../../../services/media_service.dart';
 import '../../../services/messaging_service.dart';
 import '../../../services/signaling_service.dart';
 import '../../widgets/message_bubble.dart';
+import '../../widgets/user_avatar.dart';
 
 class ChatScreen extends StatefulWidget {
   final Contact contact;
@@ -29,6 +35,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Message? _replyTo;
   Message? _editingMsg;
   bool _showScrollToBottom = false;
+  bool _uploading = false;
   Timer? _pollTimer;
   DateTime? _lastTypingSent;
 
@@ -162,6 +169,136 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       if (mounted) _showError('Failed to send: $e');
     }
+  }
+
+  /// Called when the user picks a GIF/image from the keyboard's media panel.
+  Future<void> _onKeyboardMediaInserted(KeyboardInsertedContent content) async {
+    final bytes = content.data;
+    if (bytes == null || bytes.isEmpty) return;
+
+    // Derive extension from MIME type
+    final ext = content.mimeType.split('/').last; // e.g. 'gif', 'png'
+    final tmpDir = await getTemporaryDirectory();
+    final tmpFile = File(
+        '${tmpDir.path}/keyboard_insert_${DateTime.now().millisecondsSinceEpoch}.$ext');
+    await tmpFile.writeAsBytes(bytes);
+
+    await _pickAndSendDirect(() async => tmpFile);
+  }
+
+  Future<void> _pickAndSend(Future<File?> Function() picker) async {
+    Navigator.pop(context);
+    await _pickAndSendDirect(picker);
+  }
+
+  Future<void> _pickAndSendDirect(Future<File?> Function() picker) async {
+    File? file;
+    try {
+      file = await picker();
+    } catch (_) {
+      if (mounted) _showError('Could not access file');
+      return;
+    }
+    if (file == null) return;
+
+    setState(() => _uploading = true);
+    try {
+      final token = await SecureStorage.getToken() ?? '';
+      final meta = await MediaService.upload(file, token);
+      if (!mounted) return;
+      final freshContact =
+          context.read<ContactsProvider>().getById(widget.contact.contactId);
+      final recipientPublicKey =
+          freshContact?.publicKey ?? widget.contact.publicKey;
+      await context.read<MessagesProvider>().sendMessage(
+            recipientId: widget.contact.contactId,
+            recipientVirtualId: widget.contact.virtualId,
+            recipientPublicKey: recipientPublicKey,
+            plaintext: '',
+            replyToId: _replyTo?.id,
+            attachmentUrl: meta.url,
+            attachmentType: meta.type,
+            attachmentName: meta.name,
+            attachmentSize: meta.size,
+          );
+      setState(() => _replyTo = null);
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) _showError('Upload failed: $e');
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  void _showAttachmentPicker() {
+    // Unfocus the text field BEFORE opening the picker.
+    // Without this, Android's input method tries to commit the selected
+    // media directly into the focused TextField → "can't enter content here".
+    FocusManager.instance.primaryFocus?.unfocus();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: AppTheme.muted.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            _OptionTile(
+              icon: Icons.camera_alt_rounded,
+              label: 'Camera photo',
+              onTap: () => _pickAndSend(MediaService.pickFromCamera),
+            ),
+            _OptionTile(
+              icon: Icons.videocam_rounded,
+              label: 'Record video',
+              onTap: () async {
+                Navigator.pop(context);
+                final statuses = await [
+                  Permission.camera,
+                  Permission.microphone,
+                ].request();
+                final denied = statuses.values
+                    .any((s) => s.isDenied || s.isPermanentlyDenied);
+                if (denied) {
+                  if (mounted) {
+                    _showError('Camera and microphone permissions are required');
+                  }
+                  return;
+                }
+                if (mounted) _pickAndSendDirect(MediaService.recordVideo);
+              },
+            ),
+            _OptionTile(
+              icon: Icons.photo_library_rounded,
+              label: 'Gallery',
+              onTap: () => _pickAndSend(MediaService.pickFromGallery),
+            ),
+            _OptionTile(
+              icon: Icons.video_library_rounded,
+              label: 'Video from gallery',
+              onTap: () => _pickAndSend(MediaService.pickVideoFromGallery),
+            ),
+            _OptionTile(
+              icon: Icons.insert_drive_file_rounded,
+              label: 'File',
+              onTap: () => _pickAndSend(MediaService.pickFile),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   void _startEditing(Message m, String text) {
@@ -398,7 +535,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   PreferredSizeWidget _buildAppBar(bool isTyping) {
-    final avatarColor = AppTheme.avatarColor(widget.contact.username);
     return AppBar(
       backgroundColor: AppTheme.inputBg,
       titleSpacing: 0,
@@ -410,19 +546,10 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Stack(
             children: [
-              CircleAvatar(
+              UserAvatar(
+                username: widget.contact.username,
+                avatarUrl: widget.contact.avatarUrl,
                 radius: 20,
-                backgroundColor: avatarColor,
-                child: Text(
-                  widget.contact.username.isNotEmpty
-                      ? widget.contact.username[0].toUpperCase()
-                      : '?',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
               ),
               if (widget.contact.isOnline)
                 Positioned(
@@ -695,66 +822,111 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
       child: SafeArea(
         top: false,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Text input
-            Expanded(
-              child: Container(
-                constraints: const BoxConstraints(minHeight: 44),
-                decoration: BoxDecoration(
-                  color: AppTheme.surface,
-                  borderRadius: BorderRadius.circular(22),
+            if (_uploading)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 6),
+                child: LinearProgressIndicator(
+                  minHeight: 2,
+                  backgroundColor: Colors.transparent,
+                  color: AppTheme.primary,
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: TextField(
-                        controller: _ctrl,
-                        textCapitalization: TextCapitalization.sentences,
-                        minLines: 1,
-                        maxLines: 5,
-                        onChanged: _onTextChanged,
-                        style: const TextStyle(
-                            color: AppTheme.onSurface, fontSize: 15),
-                        decoration: const InputDecoration(
-                          hintText: 'Message',
-                          hintStyle: TextStyle(color: AppTheme.muted),
-                          contentPadding:
-                              EdgeInsets.symmetric(vertical: 12),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          filled: false,
-                        ),
-                        onSubmitted: (_) => _send(),
+              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // Attachment button
+                if (!isEditing)
+                  GestureDetector(
+                    onTap: _uploading ? null : _showAttachmentPicker,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.attach_file_rounded,
+                        color: _uploading
+                            ? AppTheme.muted.withValues(alpha: 0.4)
+                            : AppTheme.muted,
+                        size: 22,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                  ],
+                  ),
+                // Text input
+                Expanded(
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 44),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surface,
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: TextField(
+                            controller: _ctrl,
+                            textCapitalization: TextCapitalization.sentences,
+                            minLines: 1,
+                            maxLines: 5,
+                            onChanged: _onTextChanged,
+                            style: const TextStyle(
+                                color: AppTheme.onSurface, fontSize: 15),
+                            decoration: const InputDecoration(
+                              hintText: 'Message',
+                              hintStyle: TextStyle(color: AppTheme.muted),
+                              contentPadding:
+                                  EdgeInsets.symmetric(vertical: 12),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              filled: false,
+                            ),
+                            onSubmitted: (_) => _send(),
+                            // Accept GIFs and images from the keyboard's built-in
+                            // media picker (e.g. Gboard GIF button).
+                            contentInsertionConfiguration:
+                                ContentInsertionConfiguration(
+                              allowedMimeTypes: const [
+                                'image/gif',
+                                'image/png',
+                                'image/jpeg',
+                                'image/webp',
+                              ],
+                              onContentInserted: _onKeyboardMediaInserted,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Send button
-            GestureDetector(
-              onTap: _send,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 44,
-                height: 44,
-                decoration: const BoxDecoration(
-                  color: AppTheme.primary,
-                  shape: BoxShape.circle,
+                const SizedBox(width: 8),
+                // Send button
+                GestureDetector(
+                  onTap: _uploading ? null : _send,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: _uploading
+                          ? AppTheme.primary.withValues(alpha: 0.5)
+                          : AppTheme.primary,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      isEditing ? Icons.check_rounded : Icons.send_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
                 ),
-                child: Icon(
-                  isEditing ? Icons.check_rounded : Icons.send_rounded,
-                  color: Colors.white,
-                  size: 20,
-                ),
-              ),
+              ],
             ),
           ],
         ),

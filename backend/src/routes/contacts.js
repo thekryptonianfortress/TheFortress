@@ -10,7 +10,7 @@ router.get('/', authenticate, async (req, res) => {
   try {
     const result = await db.query(
       `SELECT c.id, c.user_id, c.contact_id,
-              u.virtual_id, u.username, u.public_key, u.last_seen
+              u.virtual_id, u.username, u.public_key, u.last_seen, u.avatar_url
        FROM contacts c
        JOIN users u ON u.id = c.contact_id
        WHERE c.user_id = $1
@@ -51,7 +51,7 @@ router.post('/', authenticate, async (req, res) => {
     // Return full contact info
     const row = await db.query(
       `SELECT c.id, c.user_id, c.contact_id,
-              u.virtual_id, u.username, u.public_key, u.last_seen
+              u.virtual_id, u.username, u.public_key, u.last_seen, u.avatar_url
        FROM contacts c JOIN users u ON u.id = c.contact_id
        WHERE c.user_id = $1 AND c.contact_id = $2`,
       [req.userId, contact.id]

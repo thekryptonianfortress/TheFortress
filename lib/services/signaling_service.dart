@@ -145,6 +145,10 @@ class SignalingService {
     required String encryptedContent,
     required String nonce,
     String? replyToId,
+    String? attachmentUrl,
+    String? attachmentType,
+    String? attachmentName,
+    int? attachmentSize,
   }) {
     _socket?.emit('send-message', {
       'recipient_virtual_id': recipientVirtualId,
@@ -152,6 +156,10 @@ class SignalingService {
       'encrypted_content': encryptedContent,
       'nonce': nonce,
       if (replyToId != null) 'reply_to_id': replyToId,
+      if (attachmentUrl != null) 'attachment_url': attachmentUrl,
+      if (attachmentType != null) 'attachment_type': attachmentType,
+      if (attachmentName != null) 'attachment_name': attachmentName,
+      if (attachmentSize != null) 'attachment_size': attachmentSize,
     });
   }
 
