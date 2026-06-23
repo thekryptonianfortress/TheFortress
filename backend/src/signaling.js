@@ -38,6 +38,21 @@ function setupSignaling(io) {
     await db.query('UPDATE users SET last_seen = NOW() WHERE id = $1', [userId]);
     broadcastPresence(io, userId, true);
 
+    // Send this user the current online status of all their contacts
+    try {
+      const contactsRes = await db.query(
+        'SELECT contact_id FROM contacts WHERE user_id = $1',
+        [userId]
+      );
+      const presence = contactsRes.rows.map(r => ({
+        user_id: r.contact_id,
+        is_online: onlineUsers.has(r.contact_id),
+      }));
+      socket.emit('contacts-presence', presence);
+    } catch (e) {
+      console.error('[socket] contacts-presence error:', e.message);
+    }
+
     // Deliver any messages that arrived while this user was offline
     const pendingRes = await db.query(
       `SELECT m.id, m.sender_id, m.encrypted_content, m.nonce, m.reply_to_id, m.created_at,
@@ -307,14 +322,15 @@ function setupSignaling(io) {
     socket.on('disconnect', async () => {
       onlineUsers.delete(userId);
       console.log(`[socket] disconnected userId=${userId} online=${onlineUsers.size}`);
+      const now = new Date().toISOString();
       await db.query('UPDATE users SET last_seen = NOW() WHERE id = $1', [userId]);
-      broadcastPresence(io, userId, false);
+      broadcastPresence(io, userId, false, now);
     });
   });
 }
 
-function broadcastPresence(io, userId, isOnline) {
-  io.emit('presence-update', { user_id: userId, is_online: isOnline });
+function broadcastPresence(io, userId, isOnline, lastSeen = null) {
+  io.emit('presence-update', { user_id: userId, is_online: isOnline, last_seen: lastSeen });
 }
 
 async function getUserByVirtualId(virtualId) {

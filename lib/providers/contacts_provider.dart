@@ -71,10 +71,13 @@ class ContactsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updatePresence(String contactId, bool isOnline) {
-    final idx = _contacts.indexWhere((c) => c.contactId == contactId);
+  void updatePresence(String userId, bool isOnline, {DateTime? lastSeen}) {
+    final idx = _contacts.indexWhere((c) => c.contactId == userId);
     if (idx != -1) {
-      _contacts[idx] = _contacts[idx].copyWith(isOnline: isOnline);
+      _contacts[idx] = _contacts[idx].copyWith(
+        isOnline: isOnline,
+        lastSeen: !isOnline && lastSeen != null ? lastSeen : _contacts[idx].lastSeen,
+      );
       notifyListeners();
     }
   }

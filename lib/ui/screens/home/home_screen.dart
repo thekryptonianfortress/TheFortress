@@ -7,6 +7,8 @@ import '../../../data/local/database.dart';
 import '../../../data/models/call_record.dart';
 import '../../../providers/call_provider.dart';
 import '../../../providers/contacts_provider.dart';
+import 'dart:async';
+import '../../../services/signaling_service.dart';
 import '../../../services/webrtc_service.dart' show CallState;
 import '../contacts/contacts_screen.dart';
 import '../settings/settings_screen.dart';
@@ -23,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
   List<CallRecord> _callHistory = [];
   CallState? _prevCallState;
+  StreamSubscription<SignalingMessage>? _presenceSub;
 
   @override
   void initState() {
@@ -30,13 +33,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _loadCallHistory();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _subscribePresence();
       await context.read<ContactsProvider>().loadContacts();
       if (mounted) _checkPendingNotificationChat();
     });
   }
 
+  void _subscribePresence() {
+    _presenceSub = context.read<SignalingService>().stream.listen((msg) {
+      if (!mounted) return;
+      final contacts = context.read<ContactsProvider>();
+
+      if (msg.event == SignalingEvent.presenceUpdate) {
+        final userId = msg.data['user_id'] as String?;
+        final isOnline = msg.data['is_online'] as bool? ?? false;
+        final lastSeenStr = msg.data['last_seen'] as String?;
+        final lastSeen = lastSeenStr != null ? DateTime.tryParse(lastSeenStr) : null;
+        if (userId != null) {
+          contacts.updatePresence(userId, isOnline, lastSeen: lastSeen);
+        }
+      } else if (msg.event == SignalingEvent.contactsPresence) {
+        final list = (msg.data['list'] as List).cast<Map<dynamic, dynamic>>();
+        for (final entry in list) {
+          final userId = entry['user_id'] as String?;
+          final isOnline = entry['is_online'] as bool? ?? false;
+          if (userId != null) {
+            contacts.updatePresence(userId, isOnline);
+          }
+        }
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _presenceSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

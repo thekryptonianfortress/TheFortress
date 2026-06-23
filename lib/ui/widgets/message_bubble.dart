@@ -289,111 +289,121 @@ class _MessageBubbleState extends State<MessageBubble>
         left: isMe ? 72 : 16,
         right: isMe ? 16 : 72,
         top: 2,
-        bottom: hasReactions ? 0 : 2,
+        bottom: hasReactions ? 18 : 2,
       ),
-      child: Column(
-        crossAxisAlignment:
-            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Align(
-            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                // ── Bubble body ───────────────────────────────────
-                Container(
-                  decoration: BoxDecoration(
-                    color: bubbleColor,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(16),
-                      topRight: const Radius.circular(16),
-                      bottomLeft: Radius.circular(isMe ? 16 : 4),
-                      bottomRight: Radius.circular(isMe ? 4 : 16),
-                    ),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(16),
-                      topRight: const Radius.circular(16),
-                      bottomLeft: Radius.circular(isMe ? 16 : 4),
-                      bottomRight: Radius.circular(isMe ? 4 : 16),
-                    ),
-                    child: IntrinsicWidth(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Reply preview
-                          if (widget.replyToText != null && !isDeleted)
-                            _ReplyPreview(
-                              senderName: widget.replyToSender ?? '',
-                              text: widget.replyToText!,
-                              isMe: isMe,
-                            ),
-                          // Content
-                          Padding(
-                            padding:
-                                const EdgeInsets.fromLTRB(10, 6, 10, 6),
-                            child: isDeleted
-                                ? _deletedContent(isMe)
-                                : _messageContent(
-                                    context, text, time, isEdited, isMe),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // ── Bubble body ───────────────────────────────────
+            Container(
+              decoration: BoxDecoration(
+                color: bubbleColor,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: Radius.circular(isMe ? 16 : 4),
+                  bottomRight: Radius.circular(isMe ? 4 : 16),
                 ),
-                // ── Tail ─────────────────────────────────────────
-                Positioned(
-                  right: isMe ? -7 : null,
-                  left: isMe ? null : -7,
-                  bottom: 0,
-                  child: CustomPaint(
-                    size: const Size(10, 14),
-                    painter: _TailPainter(color: bubbleColor, isMe: isMe),
-                  ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(16),
+                  topRight: const Radius.circular(16),
+                  bottomLeft: Radius.circular(isMe ? 16 : 4),
+                  bottomRight: Radius.circular(isMe ? 4 : 16),
                 ),
-              ],
-            ),
-          ),
-          if (hasReactions)
-            Padding(
-              padding: const EdgeInsets.only(top: 3, bottom: 4),
-              child: Wrap(
-                spacing: 4,
-                children: reactions.entries.map((e) {
-                  final count = e.value.length;
-                  final iMine = e.value.contains(widget.myUserId);
-                  return GestureDetector(
-                    onTap: () => _showWhoReacted(context, e.key, e.value),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: iMine
-                            ? AppTheme.primary.withValues(alpha: 0.3)
-                            : const Color(0xFF2A3A4A),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: iMine
-                              ? AppTheme.primary
-                              : Colors.white.withValues(alpha: 0.1),
-                          width: 1,
+                child: IntrinsicWidth(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Reply preview
+                      if (widget.replyToText != null && !isDeleted)
+                        _ReplyPreview(
+                          senderName: widget.replyToSender ?? '',
+                          text: widget.replyToText!,
+                          isMe: isMe,
                         ),
+                      // Content
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(
+                            10, 6, 10, hasReactions ? 10 : 6),
+                        child: isDeleted
+                            ? _deletedContent(isMe)
+                            : _messageContent(
+                                context, text, time, isEdited, isMe),
                       ),
-                      child: Text(
-                        count > 1 ? '${e.key} $count' : e.key,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    ),
-                  );
-                }).toList(),
+                    ],
+                  ),
+                ),
               ),
             ),
-        ],
+            // ── Tail ─────────────────────────────────────────
+            Positioned(
+              right: isMe ? -7 : null,
+              left: isMe ? null : -7,
+              bottom: 0,
+              child: CustomPaint(
+                size: const Size(10, 14),
+                painter: _TailPainter(color: bubbleColor, isMe: isMe),
+              ),
+            ),
+            // ── Reactions (overlapping bottom edge) ───────────
+            if (hasReactions)
+              Positioned(
+                bottom: -13,
+                right: isMe ? 6 : null,
+                left: isMe ? null : 6,
+                child: _buildReactionPills(context, reactions, isMe),
+              ),
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildReactionPills(
+    BuildContext context,
+    Map<String, List<String>> reactions,
+    bool isMe,
+  ) {
+    return Wrap(
+      spacing: 4,
+      children: reactions.entries.map((e) {
+        final count = e.value.length;
+        final iMine = e.value.contains(widget.myUserId);
+        return GestureDetector(
+          onTap: () => _showWhoReacted(context, e.key, e.value),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: iMine
+                  ? AppTheme.primary.withValues(alpha: 0.3)
+                  : const Color(0xFF2A3A4A),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: iMine
+                    ? AppTheme.primary
+                    : Colors.white.withValues(alpha: 0.15),
+                width: 1,
+              ),
+              boxShadow: const [
+                BoxShadow(
+                    color: Colors.black38,
+                    blurRadius: 4,
+                    offset: Offset(0, 1)),
+              ],
+            ),
+            child: Text(
+              count > 1 ? '${e.key} $count' : e.key,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 

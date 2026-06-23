@@ -5,6 +5,12 @@ import '../core/constants.dart';
 import '../data/local/secure_storage.dart';
 import '../services/auth_service.dart';
 
+String? _normalizeAvatarUrl(String? url) {
+  if (url == null || url.isEmpty) return null;
+  if (url.startsWith('http')) return url;
+  return '${AppConstants.serverBaseUrl}$url';
+}
+
 class AuthProvider extends ChangeNotifier {
   bool _isAuthenticated = false;
   bool _isLoading = false;
@@ -47,7 +53,7 @@ class AuthProvider extends ChangeNotifier {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         _username = data['username'] as String?;
-        _avatarUrl = data['avatar_url'] as String?;
+        _avatarUrl = _normalizeAvatarUrl(data['avatar_url'] as String?);
         await SecureStorage.saveUsername(_username ?? '');
         await SecureStorage.saveAvatarUrl(_avatarUrl);
         notifyListeners();
@@ -81,7 +87,7 @@ class AuthProvider extends ChangeNotifier {
       _userId = data['user']['id'] as String;
       _virtualId = data['user']['virtual_id'] as String;
       _username = data['user']['username'] as String;
-      _avatarUrl = data['user']['avatar_url'] as String?;
+      _avatarUrl = _normalizeAvatarUrl(data['user']['avatar_url'] as String?);
       _isAuthenticated = true;
       _error = null;
       return true;
@@ -113,7 +119,19 @@ class AuthProvider extends ChangeNotifier {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         _username = data['username'] as String?;
-        _avatarUrl = data['avatar_url'] as String?;
+        final returnedUrl = data['avatar_url'] as String?;
+        // Only update _avatarUrl if the caller explicitly set one, or explicitly
+        // cleared it (empty string). If server returns null and we didn't touch
+        // the avatar in this call, preserve the existing value.
+        if (avatarUrl != null) {
+          _avatarUrl = _normalizeAvatarUrl(returnedUrl);
+        } else {
+          // Username-only update: trust the server value but normalize it;
+          // only overwrite if server returned something non-null.
+          if (returnedUrl != null) {
+            _avatarUrl = _normalizeAvatarUrl(returnedUrl);
+          }
+        }
         await SecureStorage.saveUsername(_username ?? '');
         await SecureStorage.saveAvatarUrl(_avatarUrl);
         notifyListeners();

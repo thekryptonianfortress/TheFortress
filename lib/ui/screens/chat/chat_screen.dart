@@ -394,6 +394,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   setState(() => _replyTo = m);
                 },
               ),
+            if (!m.isDeleted)
+              _OptionTile(
+                icon: Icons.forward_rounded,
+                label: 'Forward',
+                onTap: () {
+                  Navigator.pop(context);
+                  _showForwardPicker(m, decryptedText);
+                },
+              ),
             if (m.isOutgoing && !m.isDeleted)
               _OptionTile(
                 icon: Icons.edit_rounded,
@@ -449,6 +458,108 @@ class _ChatScreenState extends State<ChatScreen> {
       } catch (e) {
         if (mounted) _showError('Failed to delete: $e');
       }
+    }
+  }
+
+  void _showForwardPicker(Message m, String? decryptedText) {
+    final contacts = context.read<ContactsProvider>().contacts;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: AppTheme.muted.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                'Forward to...',
+                style: TextStyle(
+                    color: AppTheme.muted,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500),
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A3A4A)),
+            if (contacts.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text('No contacts',
+                    style: TextStyle(color: AppTheme.muted)),
+              )
+            else
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                    maxHeight:
+                        MediaQuery.of(ctx).size.height * 0.5),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: contacts.length,
+                  itemBuilder: (_, i) {
+                    final c = contacts[i];
+                    return ListTile(
+                      leading: UserAvatar(
+                        username: c.username,
+                        avatarUrl: c.avatarUrl,
+                        radius: 22,
+                      ),
+                      title: Text(c.username,
+                          style: const TextStyle(
+                              color: AppTheme.onSurface, fontSize: 15)),
+                      subtitle: Text(c.virtualId,
+                          style: const TextStyle(
+                              color: AppTheme.muted, fontSize: 12)),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _doForward(m, decryptedText, c);
+                      },
+                    );
+                  },
+                ),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _doForward(
+      Message m, String? decryptedText, Contact target) async {
+    try {
+      final freshTarget =
+          context.read<ContactsProvider>().getById(target.contactId);
+      final recipientPublicKey =
+          freshTarget?.publicKey ?? target.publicKey;
+      await context.read<MessagesProvider>().sendMessage(
+            recipientId: target.contactId,
+            recipientVirtualId: target.virtualId,
+            recipientPublicKey: recipientPublicKey,
+            plaintext: decryptedText ?? '',
+            attachmentUrl: m.attachmentUrl,
+            attachmentType: m.attachmentType,
+            attachmentName: m.attachmentName,
+            attachmentSize: m.attachmentSize,
+          );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Forwarded to ${target.username}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) _showError('Forward failed: $e');
     }
   }
 
@@ -534,7 +645,35 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  String _lastSeenLabel(Contact c) {
+    if (c.isOnline) return 'online';
+    if (c.lastSeen == null) return c.virtualId;
+    final ls = c.lastSeen!.toLocal();
+    final now = DateTime.now();
+    final today = DateUtils.isSameDay(ls, now);
+    final yesterday =
+        DateUtils.isSameDay(ls, now.subtract(const Duration(days: 1)));
+    final timeStr = DateFormat('HH:mm').format(ls);
+    if (today) return 'last seen today at $timeStr';
+    if (yesterday) return 'last seen yesterday at $timeStr';
+    return 'last seen ${DateFormat('d MMM').format(ls)} at $timeStr';
+  }
+
+  Contact get _liveContact =>
+      context.read<ContactsProvider>().getById(widget.contact.contactId) ?? widget.contact;
+
+  void _showContactInfo() {
+    final contact = _liveContact;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _ContactInfoSheet(contact: contact),
+    );
+  }
+
   PreferredSizeWidget _buildAppBar(bool isTyping) {
+    final contact = context.watch<ContactsProvider>().getById(widget.contact.contactId) ?? widget.contact;
     return AppBar(
       backgroundColor: AppTheme.inputBg,
       titleSpacing: 0,
@@ -542,16 +681,19 @@ class _ChatScreenState extends State<ChatScreen> {
         icon: const Icon(Icons.arrow_back_rounded),
         onPressed: () => Navigator.pop(context),
       ),
-      title: Row(
+      title: GestureDetector(
+        onTap: _showContactInfo,
+        behavior: HitTestBehavior.opaque,
+        child: Row(
         children: [
           Stack(
             children: [
               UserAvatar(
-                username: widget.contact.username,
-                avatarUrl: widget.contact.avatarUrl,
+                username: contact.username,
+                avatarUrl: contact.avatarUrl,
                 radius: 20,
               ),
-              if (widget.contact.isOnline)
+              if (contact.isOnline)
                 Positioned(
                   right: 0,
                   bottom: 0,
@@ -574,7 +716,7 @@ class _ChatScreenState extends State<ChatScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  widget.contact.username,
+                  contact.username,
                   style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
@@ -594,9 +736,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         )
                       : Text(
-                          widget.contact.isOnline
-                              ? 'online'
-                              : widget.contact.virtualId,
+                          _lastSeenLabel(contact),
                           key: const ValueKey('status'),
                           style: const TextStyle(
                               fontSize: 12, color: AppTheme.muted),
@@ -607,6 +747,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
+      ),
       ),
       actions: [
         IconButton(
@@ -1174,6 +1315,198 @@ class _OptionTile extends StatelessWidget {
       onTap: onTap,
       contentPadding: const EdgeInsets.symmetric(horizontal: 20),
       minLeadingWidth: 24,
+    );
+  }
+}
+
+// ── Contact Info Bottom Sheet ──────────────────────────────────────────────
+
+class _ContactInfoSheet extends StatelessWidget {
+  final Contact contact;
+  const _ContactInfoSheet({required this.contact});
+
+  String _lastSeenFull() {
+    if (contact.isOnline) return 'online';
+    if (contact.lastSeen == null) return 'last seen: unknown';
+    final ls = contact.lastSeen!.toLocal();
+    final now = DateTime.now();
+    final today = DateUtils.isSameDay(ls, now);
+    final yesterday =
+        DateUtils.isSameDay(ls, now.subtract(const Duration(days: 1)));
+    final timeStr = DateFormat('HH:mm').format(ls);
+    if (today) return 'last seen today at $timeStr';
+    if (yesterday) return 'last seen yesterday at $timeStr';
+    return 'last seen ${DateFormat('d MMM yyyy').format(ls)} at $timeStr';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final avatarColor = AppTheme.avatarColor(contact.username);
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Drag handle
+          const SizedBox(height: 12),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: AppTheme.muted.withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Avatar
+          Stack(
+            children: [
+              UserAvatar(
+                username: contact.username,
+                avatarUrl: contact.avatarUrl,
+                radius: 48,
+                backgroundColor: avatarColor,
+              ),
+              if (contact.isOnline)
+                Positioned(
+                  right: 2,
+                  bottom: 2,
+                  child: Container(
+                    width: 16,
+                    height: 16,
+                    decoration: BoxDecoration(
+                      color: AppTheme.accent,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: AppTheme.surface, width: 2.5),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Username
+          Text(
+            contact.username,
+            style: const TextStyle(
+              color: AppTheme.onSurface,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+
+          // Last seen
+          Text(
+            _lastSeenFull(),
+            style: TextStyle(
+              color: contact.isOnline ? AppTheme.accent : AppTheme.muted,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Divider
+          Divider(height: 1, color: AppTheme.divider),
+
+          // Pager ID row
+          ListTile(
+            leading: const Icon(Icons.tag_rounded, color: AppTheme.primary, size: 22),
+            title: const Text('Pager ID',
+                style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+            subtitle: Text(
+              contact.virtualId,
+              style: const TextStyle(
+                  color: AppTheme.onSurface,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500),
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.copy_rounded, size: 18, color: AppTheme.muted),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: contact.virtualId));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Pager ID copied')),
+                );
+              },
+            ),
+          ),
+
+          Divider(height: 1, color: AppTheme.divider),
+
+          // Action buttons
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _ActionButton(
+                  icon: Icons.message_rounded,
+                  label: 'Message',
+                  color: AppTheme.primary,
+                  onTap: () => Navigator.pop(context),
+                ),
+                _ActionButton(
+                  icon: Icons.call_rounded,
+                  label: 'Call',
+                  color: AppTheme.accent,
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/call/outgoing',
+                        arguments: contact);
+                  },
+                ),
+              ],
+            ),
+          ),
+
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ActionButton({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(height: 6),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontSize: 12, fontWeight: FontWeight.w500)),
+        ],
+      ),
     );
   }
 }

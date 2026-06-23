@@ -17,6 +17,7 @@ enum SignalingEvent {
   messageDelivered,
   messageAck,
   presenceUpdate,
+  contactsPresence,
   userTyping,
   messagesRead,
   messageEdited,
@@ -100,6 +101,10 @@ class SignalingService {
         _emit(SignalingEvent.messageDeleted, Map<String, dynamic>.from(data as Map)));
     _socket!.on('reaction-added', (data) =>
         _emit(SignalingEvent.reactionAdded, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('contacts-presence', (data) {
+      final list = (data as List).cast<Map<dynamic, dynamic>>();
+      _emit(SignalingEvent.contactsPresence, {'list': list});
+    });
   }
 
   void _emit(SignalingEvent event, Map<String, dynamic> data) {
