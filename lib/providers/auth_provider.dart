@@ -88,6 +88,7 @@ class AuthProvider extends ChangeNotifier {
       _virtualId = data['user']['virtual_id'] as String;
       _username = data['user']['username'] as String;
       _avatarUrl = _normalizeAvatarUrl(data['user']['avatar_url'] as String?);
+      await SecureStorage.saveAvatarUrl(_avatarUrl);
       _isAuthenticated = true;
       _error = null;
       return true;

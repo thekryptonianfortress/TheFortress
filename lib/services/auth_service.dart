@@ -85,6 +85,7 @@ class AuthService {
       username: data['user']['username'] as String,
       privateKey: privateKey,
       publicKey: publicKey,
+      avatarUrl: data['user']['avatar_url'] as String?,
     );
     return data;
   }

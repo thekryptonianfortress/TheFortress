@@ -62,7 +62,7 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await db.query(
-      'SELECT id, virtual_id, username, public_key, password_hash FROM users WHERE virtual_id = $1',
+      'SELECT id, virtual_id, username, public_key, avatar_url, password_hash FROM users WHERE virtual_id = $1',
       [virtual_id.toUpperCase()]
     );
     if (result.rows.length === 0) {
