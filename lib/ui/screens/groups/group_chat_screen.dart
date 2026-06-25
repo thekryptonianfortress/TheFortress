@@ -42,6 +42,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   DateTime? _lastTypingSent;
   String _myId = '';
   Timer? _pollTimer;
+  int _prevMsgCount = 0;
 
   @override
   void initState() {
@@ -56,6 +57,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     provider.setActiveGroup(widget.group.id);
     await provider.loadMessagesFromDb(widget.group.id);
     await provider.loadMessages(widget.group.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     // Poll every 30s as fallback
     _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) provider.loadMessages(widget.group.id);
@@ -70,6 +72,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _recorder.dispose();
     _pollTimer?.cancel();
     super.dispose();
+  }
+
+  void _scrollToBottom() {
+    if (_scrollCtrl.hasClients) {
+      _scrollCtrl.animateTo(
+        _scrollCtrl.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   void _onTextChanged() {
@@ -286,6 +298,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final typingUser = provider.getTypingUser(widget.group.id);
     final group = provider.groupById(widget.group.id) ?? widget.group;
 
+    // Auto-scroll to bottom when new messages arrive and user is near the bottom
+    if (msgs.length != _prevMsgCount) {
+      _prevMsgCount = msgs.length;
+      final atBottom = !_scrollCtrl.hasClients ||
+          _scrollCtrl.position.pixels >= _scrollCtrl.position.maxScrollExtent - 120;
+      if (atBottom) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+      }
+    }
+
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
@@ -379,14 +401,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                   )
                 : ListView.builder(
                     controller: _scrollCtrl,
-                    reverse: true,
                     padding: const EdgeInsets.only(top: 8, bottom: 8),
                     itemCount: msgs.length,
                     itemBuilder: (_, idx) {
-                      // reversed: idx=0 is the last message
-                      final reversedMsgs = msgs.reversed.toList();
-                      final m = reversedMsgs[idx];
-                      final prevMsg = idx < reversedMsgs.length - 1 ? reversedMsgs[idx + 1] : null;
+                      final m = msgs[idx];
+                      final prevMsg = idx > 0 ? msgs[idx - 1] : null;
                       final showDate = prevMsg == null ||
                           !DateUtils.isSameDay(m.createdAt.toLocal(), prevMsg.createdAt.toLocal());
                       final nextAudioSource = _nextAudio(msgs, m);
