@@ -179,6 +179,7 @@ class GroupsProvider extends ChangeNotifier {
               description: updated.description,
               avatarUrl: updated.avatarUrl,
             );
+            await _db.upsertGroup(_groups[gid]!);
             notifyListeners();
           }
 
@@ -187,6 +188,7 @@ class GroupsProvider extends ChangeNotifier {
           _groups.remove(gid);
           _messages.remove(gid);
           _unreadCounts.remove(gid);
+          await _db.deleteGroup(gid);
           notifyListeners();
 
         case SignalingEvent.groupChatCleared:
@@ -218,12 +220,13 @@ class GroupsProvider extends ChangeNotifier {
         _unreadCounts[msg.groupId] = (_unreadCounts[msg.groupId] ?? 0) + 1;
       }
 
-      // Update last message preview on group tile
+      // Update last message preview on group tile and persist
       if (_groups.containsKey(msg.groupId)) {
         _groups[msg.groupId] = _groups[msg.groupId]!.copyWith(
           lastMessage: _messagePreview(msg.content, msg.attachmentType),
           lastMessageAt: msg.createdAt,
         );
+        await _db.upsertGroup(_groups[msg.groupId]!);
       }
 
       notifyListeners();
@@ -232,14 +235,25 @@ class GroupsProvider extends ChangeNotifier {
 
   Future<void> loadGroups() async {
     _isLoading = true;
-    notifyListeners();
+    // Show cached groups immediately so the tab is usable offline
+    final cached = await _db.getGroups();
+    for (final g in cached) {
+      _groups.putIfAbsent(g.id, () => g);
+    }
+    if (cached.isNotEmpty) notifyListeners();
+
     try {
       final list = await _service.fetchGroups();
       for (final g in list) {
         _groups[g.id] = g;
+        await _db.upsertGroup(g);
       }
       // Remove groups no longer active
-      _groups.removeWhere((id, _) => !list.any((g) => g.id == id));
+      final serverIds = list.map((g) => g.id).toSet();
+      _groups.removeWhere((id, _) => !serverIds.contains(id));
+      for (final id in _groups.keys.toList()) {
+        if (!serverIds.contains(id)) await _db.deleteGroup(id);
+      }
     } catch (e) {
       dev.log('[GroupsProvider] loadGroups error: $e');
     }
@@ -274,6 +288,7 @@ class GroupsProvider extends ChangeNotifier {
   Future<Group> createGroup({required String name, String? description, String? avatarUrl}) async {
     final g = await _service.createGroup(name: name, description: description, avatarUrl: avatarUrl);
     _groups[g.id] = g;
+    await _db.upsertGroup(g);
     notifyListeners();
     return g;
   }
@@ -284,15 +299,25 @@ class GroupsProvider extends ChangeNotifier {
 
   Future<void> loadMessages(String groupId) async {
     final myId = await SecureStorage.getUserId() ?? '';
-    final msgs = await _service.fetchMessages(groupId, myId);
-    final existing = {for (final m in (_messages[groupId] ?? [])) m.id: m};
-    _messages[groupId] = msgs.map<GroupMessage>((m) {
-      final cached = existing[m.id];
-      return cached ?? m;
-    }).toList();
-    // Persist to local DB
-    for (final m in _messages[groupId]!) {
-      await _db.upsertGroupMessage(m);
+    // Load from DB immediately so the chat is readable offline
+    if (_messages[groupId] == null || _messages[groupId]!.isEmpty) {
+      final localMsgs = await _db.getGroupMessages(groupId);
+      if (localMsgs.isNotEmpty) {
+        _messages[groupId] = localMsgs;
+        notifyListeners();
+      }
+    }
+    // Try to sync from server
+    final serverMsgs = await _service.fetchMessages(groupId, myId);
+    if (serverMsgs != null) {
+      final existing = {for (final m in (_messages[groupId] ?? [])) m.id: m};
+      _messages[groupId] = serverMsgs.map<GroupMessage>((m) {
+        final cached = existing[m.id];
+        return cached ?? m;
+      }).toList();
+      for (final m in _messages[groupId]!) {
+        await _db.upsertGroupMessage(m);
+      }
     }
     if (_activeGroupId == groupId) _unreadCounts[groupId] = 0;
     notifyListeners();
@@ -335,11 +360,13 @@ class GroupsProvider extends ChangeNotifier {
     );
 
     _messages[groupId] = [...(_messages[groupId] ?? []), optimistic];
+    await _db.upsertGroupMessage(optimistic);
     if (_groups.containsKey(groupId)) {
       _groups[groupId] = _groups[groupId]!.copyWith(
         lastMessage: _messagePreview(content, attachmentType),
         lastMessageAt: optimistic.createdAt,
       );
+      await _db.upsertGroup(_groups[groupId]!);
     }
     notifyListeners();
 
@@ -419,6 +446,7 @@ class GroupsProvider extends ChangeNotifier {
     _groups.remove(groupId);
     _messages.remove(groupId);
     _unreadCounts.remove(groupId);
+    await _db.deleteGroup(groupId);
     notifyListeners();
   }
 
@@ -436,6 +464,7 @@ class GroupsProvider extends ChangeNotifier {
         avatarUrl: updated.avatarUrl,
         themeId: updated.themeId,
       );
+      await _db.upsertGroup(_groups[groupId]!);
     }
     notifyListeners();
     return updated;
@@ -457,6 +486,7 @@ class GroupsProvider extends ChangeNotifier {
     _groups.remove(groupId);
     _messages.remove(groupId);
     _unreadCounts.remove(groupId);
+    await _db.deleteGroup(groupId);
     notifyListeners();
   }
 

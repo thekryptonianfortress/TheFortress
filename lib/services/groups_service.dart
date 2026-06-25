@@ -87,15 +87,21 @@ class GroupsService {
     if (res.statusCode != 200) throw Exception('Failed to promote member');
   }
 
-  Future<List<GroupMessage>> fetchMessages(String groupId, String myId) async {
-    final res = await http.get(
-      Uri.parse('$_base/groups/$groupId/messages'),
-      headers: await _headers(),
-    );
-    if (res.statusCode != 200) throw Exception('Failed to fetch messages');
-    return (jsonDecode(res.body) as List)
-        .map((j) => GroupMessage.fromJson(Map<String, dynamic>.from(j as Map), myId))
-        .toList();
+  /// Returns messages from server, or null on any network/server failure
+  /// so the caller can fall back to local DB.
+  Future<List<GroupMessage>?> fetchMessages(String groupId, String myId) async {
+    try {
+      final res = await http.get(
+        Uri.parse('$_base/groups/$groupId/messages'),
+        headers: await _headers(),
+      );
+      if (res.statusCode != 200) return null;
+      return (jsonDecode(res.body) as List)
+          .map((j) => GroupMessage.fromJson(Map<String, dynamic>.from(j as Map), myId))
+          .toList();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<Group> updateGroup(String groupId, {String? name, String? description, String? avatarUrl, String? themeId}) async {

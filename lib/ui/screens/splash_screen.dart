@@ -25,22 +25,6 @@ class _SplashScreenState extends State<SplashScreen> {
     _checkAuth();
   }
 
-  /// Pings the server with the stored token to check it's still valid.
-  Future<bool> _validateToken() async {
-    try {
-      final token = await SecureStorage.getToken();
-      if (token == null) return false;
-      final res = await http.get(
-        Uri.parse('${AppConstants.serverBaseUrl}/contacts'),
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 8));
-      return res.statusCode != 401;
-    } catch (_) {
-      // Network error — assume valid so offline use still works
-      return true;
-    }
-  }
-
   /// Ensures the stored private key is valid (32 bytes). If not, regenerates
   /// the keypair and pushes the new public key to the server so E2E crypto works.
   Future<void> _ensureValidKeypair() async {
@@ -78,22 +62,13 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!mounted) return;
     final auth = context.read<AuthProvider>();
     if (auth.isAuthenticated) {
-      // Validate the stored token is accepted by the current server.
-      // If not (e.g. server changed / JWT secret rotated), force logout.
-      final valid = await _validateToken();
-      if (!valid) {
-        await context.read<AuthProvider>().logout();
-        if (!mounted) return;
-        Navigator.pushReplacementNamed(context, '/login');
-        return;
-      }
-      // Silently fix broken keypairs without requiring logout
-      await _ensureValidKeypair();
-      // Pre-fetch TURN credentials so they're cached before any call starts
-      await SyncService().syncTurnCredentials().catchError((_) {});
+      // Go straight to home — don't block on any network calls.
+      // Token validity is checked lazily (API calls return 401 → handled there).
+      // All network work happens in the background after navigation.
       await context.read<SignalingService>().connect();
-      // Fire-and-forget — don't block navigation on FCM
       Future(() async {
+        await _ensureValidKeypair();
+        await SyncService().syncTurnCredentials().catchError((_) {});
         try {
           final token = await NotificationService.getFcmToken();
           if (token != null) await AuthService.updateFcmToken(token);

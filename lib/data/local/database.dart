@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/contact.dart';
+import '../models/group.dart';
 import '../models/group_message.dart';
 import '../models/message.dart';
 import '../models/call_record.dart';
@@ -20,7 +21,7 @@ class LocalDatabase {
     final path = join(await getDatabasesPath(), AppConstants.dbName);
     return openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -74,6 +75,25 @@ class LocalDatabase {
           edited_at TEXT,
           created_at TEXT NOT NULL,
           is_outgoing INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+    }
+    if (oldVersion < 8) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS groups (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          avatar_url TEXT,
+          join_code TEXT NOT NULL,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          my_role TEXT NOT NULL DEFAULT 'member',
+          member_count INTEGER NOT NULL DEFAULT 1,
+          pending_count INTEGER NOT NULL DEFAULT 0,
+          last_message TEXT,
+          last_message_at TEXT,
+          theme_id TEXT
         )
       ''');
     }
@@ -152,6 +172,24 @@ class LocalDatabase {
         edited_at TEXT,
         created_at TEXT NOT NULL,
         is_outgoing INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        avatar_url TEXT,
+        join_code TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        my_role TEXT NOT NULL DEFAULT 'member',
+        member_count INTEGER NOT NULL DEFAULT 1,
+        pending_count INTEGER NOT NULL DEFAULT 0,
+        last_message TEXT,
+        last_message_at TEXT,
+        theme_id TEXT
       )
     ''');
 
@@ -380,6 +418,24 @@ class LocalDatabase {
   Future<void> clearGroupMessages(String groupId) async {
     final d = await db;
     await d.delete('group_messages', where: 'group_id = ?', whereArgs: [groupId]);
+  }
+
+  // ── Groups ─────────────────────────────────────────────────
+  Future<void> upsertGroup(Group g) async {
+    final d = await db;
+    await d.insert('groups', g.toDbMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Group>> getGroups() async {
+    final d = await db;
+    final rows = await d.query('groups', orderBy: 'last_message_at DESC');
+    return rows.map(Group.fromDbMap).toList();
+  }
+
+  Future<void> deleteGroup(String groupId) async {
+    final d = await db;
+    await d.delete('groups', where: 'id = ?', whereArgs: [groupId]);
   }
 
   // ── Call Records ───────────────────────────────────────────

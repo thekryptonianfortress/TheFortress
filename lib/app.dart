@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'core/theme.dart';
 import 'data/models/contact.dart';
 import 'providers/auth_provider.dart';
+import 'providers/backup_provider.dart';
 import 'providers/call_provider.dart';
 import 'providers/contacts_provider.dart';
 import 'providers/groups_provider.dart';
@@ -38,6 +39,7 @@ class PagerApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => BackupProvider()),
         ChangeNotifierProvider(create: (_) => ContactsProvider(signaling)),
         ChangeNotifierProvider(
           create: (_) => MessagesProvider(MessagingService(signaling), signaling),

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -330,10 +331,19 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                                     fit: BoxFit.cover))
                             : (avatarUrl != null && avatarUrl.isNotEmpty)
                                 ? ClipOval(
-                                    child: Image.network(avatarUrl,
+                                    child: CachedNetworkImage(
+                                        imageUrl: avatarUrl,
                                         fit: BoxFit.cover,
-                                        errorBuilder: (_, e, st) =>
-                                            Center(
+                                        placeholder: (_, __) => Center(
+                                              child: Text(initial,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 38,
+                                                    fontWeight:
+                                                        FontWeight.w700,
+                                                  )),
+                                            ),
+                                        errorWidget: (_, __, ___) => Center(
                                               child: Text(initial,
                                                   style: const TextStyle(
                                                     color: Colors.white,

@@ -1,9 +1,13 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
 import '../../../providers/auth_provider.dart';
+import '../../../providers/backup_provider.dart';
+import 'backup_screen.dart';
 import 'profile_edit_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -148,6 +152,12 @@ class SettingsScreen extends StatelessWidget {
                 value: true,
                 onChanged: (_) {},
               ),
+
+              const SizedBox(height: 8),
+
+              // Backup & Restore
+              _SectionHeader(title: 'Backup & Restore'),
+              _BackupTile(),
 
               const SizedBox(height: 8),
 
@@ -306,6 +316,47 @@ class SettingsScreen extends StatelessWidget {
   }
 }
 
+// ── Backup tile ────────────────────────────────────────────────
+
+class _BackupTile extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final backup = context.watch<BackupProvider>();
+    String subtitle;
+    if (backup.cycle == BackupCycle.off) {
+      subtitle = 'Off';
+    } else if (backup.lastBackupTime != null) {
+      final local = backup.lastBackupTime!.toLocal();
+      final now = DateTime.now();
+      if (DateUtils.isSameDay(local, now)) {
+        subtitle = 'Last backup today at ${DateFormat('HH:mm').format(local)}';
+      } else {
+        subtitle = 'Last backup ${DateFormat('MMM d').format(local)}';
+      }
+    } else {
+      subtitle = '${backup.cycle.label} · Never backed up';
+    }
+
+    return _SettingsTile(
+      icon: Icons.backup_rounded,
+      iconColor: const Color(0xFF4DD5A6),
+      title: 'Backup & Restore',
+      subtitle: subtitle,
+      trailing: backup.isRunning
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: Color(0xFF4DD5A6)))
+          : null,
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const BackupScreen()),
+      ),
+    );
+  }
+}
+
 // ── Profile header widget ──────────────────────────────────────
 
 class _ProfileHeader extends StatelessWidget {
@@ -347,10 +398,20 @@ class _ProfileHeader extends StatelessWidget {
                   ),
                   child: avatarUrl != null && avatarUrl!.isNotEmpty
                       ? ClipOval(
-                          child: Image.network(
-                            avatarUrl!,
+                          child: CachedNetworkImage(
+                            imageUrl: avatarUrl!,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, e, st) => Center(
+                            placeholder: (_, __) => Center(
+                              child: Text(
+                                initial,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            errorWidget: (_, __, ___) => Center(
                               child: Text(
                                 initial,
                                 style: const TextStyle(

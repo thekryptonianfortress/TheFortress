@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -333,8 +334,10 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                 fit: StackFit.expand,
                 children: [
                   if (_group.avatarUrl != null)
-                    Image.network(MediaService.fullUrl(_group.avatarUrl!), fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(color: AppTheme.surface))
+                    CachedNetworkImage(
+                        imageUrl: MediaService.fullUrl(_group.avatarUrl!),
+                        fit: BoxFit.cover,
+                        errorWidget: (_, __, ___) => Container(color: AppTheme.surface))
                   else
                     Container(
                       color: AppTheme.surface,

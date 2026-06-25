@@ -241,6 +241,16 @@ class MessagesProvider extends ChangeNotifier {
 
   Future<void> loadChat(String peerId) async {
     _loadedPeerIds.add(peerId);
+    final myId = await SecureStorage.getUserId() ?? '';
+
+    // Show DB messages immediately — user sees full history with zero delay
+    final dbMsgs = await _db.getMessages(myId, peerId);
+    if (dbMsgs.isNotEmpty) {
+      _chats[peerId] = dbMsgs;
+      notifyListeners();
+    }
+
+    // Sync from server in background; merge any new messages on top
     final msgs = await _messaging.fetchMessages(peerId);
     final existing = {for (final m in (_chats[peerId] ?? [])) m.id: m};
     _chats[peerId] = msgs.map((m) {
@@ -250,7 +260,6 @@ class MessagesProvider extends ChangeNotifier {
         reactions: (cached?.reactions.isNotEmpty == true)
             ? cached!.reactions
             : m.reactions,
-        // Never downgrade status — keep the highest known state
         status: cached != null ? _maxStatus(m.status, cached.status) : m.status,
       );
     }).toList();

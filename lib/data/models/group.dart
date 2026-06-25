@@ -103,6 +103,40 @@ class Group {
         themeId: themeId ?? this.themeId,
       );
 
+  Map<String, dynamic> toDbMap() => {
+        'id': id,
+        'name': name,
+        'description': description,
+        'avatar_url': avatarUrl,
+        'join_code': joinCode,
+        'created_by': createdBy,
+        'created_at': createdAt.toIso8601String(),
+        'my_role': myRole,
+        'member_count': memberCount,
+        'pending_count': pendingCount,
+        'last_message': lastMessage,
+        'last_message_at': lastMessageAt?.toIso8601String(),
+        'theme_id': themeId,
+      };
+
+  factory Group.fromDbMap(Map<String, dynamic> m) => Group(
+        id: m['id'] as String,
+        name: m['name'] as String,
+        description: m['description'] as String?,
+        avatarUrl: m['avatar_url'] as String?,
+        joinCode: m['join_code'] as String,
+        createdBy: m['created_by'] as String,
+        createdAt: DateTime.parse(m['created_at'] as String),
+        myRole: m['my_role'] as String,
+        memberCount: m['member_count'] as int,
+        pendingCount: m['pending_count'] as int? ?? 0,
+        lastMessage: m['last_message'] as String?,
+        lastMessageAt: m['last_message_at'] != null
+            ? DateTime.tryParse(m['last_message_at'] as String)
+            : null,
+        themeId: m['theme_id'] as String?,
+      );
+
   factory Group.fromJson(Map<String, dynamic> j) => Group(
         id: j['id'] as String,
         name: j['name'] as String,

@@ -145,7 +145,7 @@ class MessagingService {
       final res = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
-      );
+      ).timeout(const Duration(seconds: 5));
       if (res.statusCode == 200) {
         final list = jsonDecode(res.body) as List;
         for (final json in list) {

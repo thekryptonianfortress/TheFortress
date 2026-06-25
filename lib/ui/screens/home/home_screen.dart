@@ -15,6 +15,7 @@ import '../contacts/contacts_screen.dart';
 import '../groups/groups_list_screen.dart';
 import '../settings/settings_screen.dart';
 import '../../widgets/user_avatar.dart';
+import '../../../providers/backup_provider.dart';
 import '../../../providers/groups_provider.dart';
 import 'package:intl/intl.dart';
 
@@ -39,6 +40,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _subscribePresence();
       await context.read<ContactsProvider>().loadContacts();
       if (mounted) _checkPendingNotificationChat();
+      // Load backup settings and run scheduled backup if due
+      if (mounted) {
+        final backup = context.read<BackupProvider>();
+        await backup.load();
+        await backup.checkScheduled();
+      }
     });
   }
 

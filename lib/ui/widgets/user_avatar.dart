@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../core/constants.dart';
 import '../../core/theme.dart';
@@ -34,7 +35,9 @@ class UserAvatar extends StatelessWidget {
     return CircleAvatar(
       radius: radius,
       backgroundColor: color,
-      backgroundImage: resolvedUrl != null ? NetworkImage(resolvedUrl) : null,
+      backgroundImage: resolvedUrl != null
+          ? CachedNetworkImageProvider(resolvedUrl)
+          : null,
       child: hasPhoto
           ? null
           : Text(
