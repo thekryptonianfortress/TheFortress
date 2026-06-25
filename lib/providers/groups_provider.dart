@@ -189,6 +189,16 @@ class GroupsProvider extends ChangeNotifier {
           _unreadCounts.remove(gid);
           notifyListeners();
 
+        case SignalingEvent.groupChatCleared:
+          final gid = msg.data['group_id'] as String;
+          _messages[gid] = [];
+          _unreadCounts[gid] = 0;
+          await _db.clearGroupMessages(gid);
+          if (_groups.containsKey(gid)) {
+            _groups[gid] = _groups[gid]!.copyWith(lastMessage: '', lastMessageAt: null);
+          }
+          notifyListeners();
+
         default:
           break;
       }
@@ -429,6 +439,17 @@ class GroupsProvider extends ChangeNotifier {
     }
     notifyListeners();
     return updated;
+  }
+
+  Future<void> clearMessages(String groupId) async {
+    await _service.clearMessages(groupId);
+    _messages[groupId] = [];
+    _unreadCounts[groupId] = 0;
+    await _db.clearGroupMessages(groupId);
+    if (_groups.containsKey(groupId)) {
+      _groups[groupId] = _groups[groupId]!.copyWith(lastMessage: '', lastMessageAt: null);
+    }
+    notifyListeners();
   }
 
   Future<void> deleteGroup(String groupId) async {

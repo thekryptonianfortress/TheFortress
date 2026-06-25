@@ -38,7 +38,7 @@ class PagerApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
-        ChangeNotifierProvider(create: (_) => ContactsProvider()),
+        ChangeNotifierProvider(create: (_) => ContactsProvider(signaling)),
         ChangeNotifierProvider(
           create: (_) => MessagesProvider(MessagingService(signaling), signaling),
         ),

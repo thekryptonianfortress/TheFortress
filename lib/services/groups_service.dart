@@ -113,6 +113,14 @@ class GroupsService {
     return Group.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
+  Future<void> clearMessages(String groupId) async {
+    final res = await http.delete(
+      Uri.parse('$_base/groups/$groupId/messages'),
+      headers: await _headers(),
+    );
+    if (res.statusCode != 200) throw Exception('Failed to clear messages');
+  }
+
   Future<void> deleteGroup(String groupId) async {
     final res = await http.delete(
       Uri.parse('$_base/groups/$groupId'),

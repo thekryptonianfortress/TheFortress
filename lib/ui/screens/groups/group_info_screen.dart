@@ -83,6 +83,43 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
     }
   }
 
+  Future<void> _editDescription() async {
+    final ctrl = TextEditingController(text: _group.description ?? '');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text('Edit Description', style: TextStyle(color: AppTheme.onSurface)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 200,
+          maxLines: 3,
+          style: const TextStyle(color: AppTheme.onSurface),
+          decoration: const InputDecoration(
+            hintText: 'Group description (optional)',
+            hintStyle: TextStyle(color: AppTheme.muted),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            child: const Text('Save', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (result != null && mounted) {
+      try {
+        await context.read<GroupsProvider>().updateGroup(_group.id, description: result);
+        await _refreshMembers();
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      }
+    }
+  }
+
   Future<void> _editName() async {
     final ctrl = TextEditingController(text: _group.name);
     final result = await showDialog<String>(
@@ -176,6 +213,32 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _clearChat() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text('Clear Chat', style: TextStyle(color: AppTheme.onSurface)),
+        content: const Text('This will clear all messages for everyone in the group. This cannot be undone.',
+            style: TextStyle(color: AppTheme.muted)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Clear', style: TextStyle(color: AppTheme.danger, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true && mounted) {
+      try {
+        await context.read<GroupsProvider>().clearMessages(_group.id);
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      }
+    }
   }
 
   Future<void> _pickTheme() async {
@@ -319,7 +382,26 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                   ),
                   if (_group.description != null && _group.description!.isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Text(_group.description!, style: const TextStyle(color: AppTheme.muted, fontSize: 14)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(_group.description!,
+                              style: const TextStyle(color: AppTheme.muted, fontSize: 14)),
+                        ),
+                        if (isAdmin)
+                          IconButton(
+                            icon: const Icon(Icons.edit_rounded, color: AppTheme.muted, size: 18),
+                            onPressed: _editDescription,
+                          ),
+                      ],
+                    ),
+                  ] else if (isAdmin) ...[
+                    const SizedBox(height: 4),
+                    GestureDetector(
+                      onTap: _editDescription,
+                      child: const Text('Add description',
+                          style: TextStyle(color: AppTheme.primary, fontSize: 14)),
+                    ),
                   ],
                   const SizedBox(height: 20),
 
@@ -455,6 +537,38 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                 childCount: pendingMembers.length,
               ),
             ),
+          ],
+
+          // Management (admin only)
+          if (isAdmin) ...[
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+                child: const Text('Management',
+                    style: TextStyle(color: AppTheme.muted, fontSize: 12, fontWeight: FontWeight.w700)),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: ListTile(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  tileColor: AppTheme.surface,
+                  leading: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: AppTheme.danger.withValues(alpha: 0.12), shape: BoxShape.circle),
+                    child: const Icon(Icons.cleaning_services_rounded, color: AppTheme.danger, size: 20),
+                  ),
+                  title: const Text('Clear Chat',
+                      style: TextStyle(color: AppTheme.onSurface, fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Delete all messages for everyone',
+                      style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+                  onTap: _clearChat,
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 8)),
           ],
 
           // Appearance (admin only)

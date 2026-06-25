@@ -35,6 +35,12 @@ const router = express.Router();
       )
     `);
     await db.query(`
+      CREATE TABLE IF NOT EXISTS group_clears (
+        group_id UUID PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+        cleared_before TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.query(`
       CREATE TABLE IF NOT EXISTS group_messages (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
@@ -394,6 +400,10 @@ router.get('/:id/messages', authenticate, async (req, res) => {
        FROM group_messages gm
        JOIN users u ON u.id = gm.sender_id
        WHERE gm.group_id = $1
+         AND gm.created_at > COALESCE(
+           (SELECT cleared_before FROM group_clears WHERE group_id = $1),
+           '-infinity'::timestamptz
+         )
        ORDER BY gm.created_at DESC
        LIMIT $2`,
       [id, limit]
@@ -402,6 +412,27 @@ router.get('/:id/messages', authenticate, async (req, res) => {
   } catch (err) {
     console.error('[groups GET messages]', err.message);
     res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+// DELETE /groups/:id/messages — clear all group messages (admin only)
+router.delete('/:id/messages', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!await isAdmin(id, req.userId)) return res.status(403).json({ error: 'Not an admin' });
+
+    await db.query(
+      `INSERT INTO group_clears (group_id, cleared_before)
+       VALUES ($1, NOW())
+       ON CONFLICT (group_id) DO UPDATE SET cleared_before = NOW()`,
+      [id]
+    );
+
+    await notifyMembers(id, 'group-chat-cleared', { group_id: id });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[groups clear messages]', err.message);
+    res.status(500).json({ error: 'Failed to clear messages' });
   }
 });
 

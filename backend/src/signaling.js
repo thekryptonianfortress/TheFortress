@@ -64,6 +64,7 @@ function setupSignaling(io) {
        ORDER BY m.created_at ASC`,
       [userId]
     );
+    const autoAddedSenders = new Set();
     for (const msg of pendingRes.rows) {
       socket.emit('new-message', {
         message_id: msg.id,
@@ -81,6 +82,43 @@ function setupSignaling(io) {
         created_at: msg.created_at.toISOString(),
       });
       await db.query("UPDATE messages SET status = 'delivered' WHERE id = $1", [msg.id]);
+
+      // Auto-add sender to contacts if not already there (once per sender per session)
+      if (!autoAddedSenders.has(msg.sender_id)) {
+        autoAddedSenders.add(msg.sender_id);
+        try {
+          const ec = await db.query(
+            'SELECT 1 FROM contacts WHERE user_id = $1 AND contact_id = $2',
+            [userId, msg.sender_id]
+          );
+          if (ec.rows.length === 0) {
+            const { v4: uuidv4 } = require('uuid');
+            const cId = uuidv4();
+            await db.query(
+              'INSERT INTO contacts (id, user_id, contact_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+              [cId, userId, msg.sender_id]
+            );
+            const sRes = await db.query(
+              'SELECT virtual_id, username, public_key, avatar_url FROM users WHERE id = $1',
+              [msg.sender_id]
+            );
+            if (sRes.rows.length > 0) {
+              const s = sRes.rows[0];
+              socket.emit('contact-auto-added', {
+                id: cId,
+                user_id: userId,
+                contact_id: msg.sender_id,
+                virtual_id: s.virtual_id,
+                username: s.username,
+                public_key: s.public_key,
+                avatar_url: s.avatar_url || null,
+              });
+            }
+          }
+        } catch (e) {
+          console.error('[auto-add contact pending]', e.message);
+        }
+      }
     }
 
     // ── Call Signaling ─────────────────────────────────────────
@@ -169,7 +207,7 @@ function setupSignaling(io) {
       );
 
       const sender = await db.query(
-        'SELECT virtual_id, username, public_key FROM users WHERE id = $1',
+        'SELECT virtual_id, username, public_key, avatar_url FROM users WHERE id = $1',
         [userId]
       );
       const senderInfo = sender.rows[0];
@@ -208,6 +246,35 @@ function setupSignaling(io) {
           sender_virtual_id: senderInfo.virtual_id,
           preview,
         });
+      }
+
+      // Auto-add sender to recipient's contacts if not already there
+      try {
+        const ec = await db.query(
+          'SELECT 1 FROM contacts WHERE user_id = $1 AND contact_id = $2',
+          [recipient.id, userId]
+        );
+        if (ec.rows.length === 0) {
+          const { v4: uuidv4 } = require('uuid');
+          const contactRowId = uuidv4();
+          await db.query(
+            'INSERT INTO contacts (id, user_id, contact_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+            [contactRowId, recipient.id, userId]
+          );
+          if (recipientSocket) {
+            io.to(recipientSocket).emit('contact-auto-added', {
+              id: contactRowId,
+              user_id: recipient.id,
+              contact_id: userId,
+              virtual_id: senderInfo.virtual_id,
+              username: senderInfo.username,
+              public_key: senderInfo.public_key,
+              avatar_url: senderInfo.avatar_url || null,
+            });
+          }
+        }
+      } catch (e) {
+        console.error('[auto-add contact]', e.message);
       }
 
       // Ack back to sender with final status
