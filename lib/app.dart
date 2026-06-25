@@ -5,7 +5,9 @@ import 'data/models/contact.dart';
 import 'providers/auth_provider.dart';
 import 'providers/call_provider.dart';
 import 'providers/contacts_provider.dart';
+import 'providers/groups_provider.dart';
 import 'providers/messages_provider.dart';
+import 'services/groups_service.dart';
 import 'services/messaging_service.dart';
 import 'services/mdns_service.dart';
 import 'services/signaling_service.dart';
@@ -17,6 +19,8 @@ import 'ui/screens/call/incoming_call_screen.dart';
 import 'ui/screens/call/outgoing_call_screen.dart';
 import 'ui/screens/chat/chat_screen.dart';
 import 'ui/screens/contacts/add_contact_screen.dart';
+import 'ui/screens/groups/create_group_screen.dart';
+import 'ui/screens/groups/join_group_screen.dart';
 import 'ui/screens/home/home_screen.dart';
 import 'ui/screens/splash_screen.dart';
 
@@ -40,6 +44,9 @@ class PagerApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(
           create: (_) => CallProvider(signaling, webrtc),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => GroupsProvider(GroupsService(), signaling),
         ),
         Provider<SignalingService>.value(value: signaling),
         Provider<MdnsService>(create: (_) => MdnsService()),
@@ -73,6 +80,10 @@ class PagerApp extends StatelessWidget {
               return MaterialPageRoute(builder: (_) => const ActiveCallScreen());
             case '/call/incoming':
               return MaterialPageRoute(builder: (_) => const IncomingCallScreen());
+            case '/groups/create':
+              return MaterialPageRoute(builder: (_) => const CreateGroupScreen());
+            case '/groups/join':
+              return MaterialPageRoute(builder: (_) => const JoinGroupScreen());
             default:
               return MaterialPageRoute(builder: (_) => const SplashScreen());
           }

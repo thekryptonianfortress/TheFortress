@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/constants.dart';
 import '../../core/theme.dart';
 
 /// Displays a circular avatar with a photo if [avatarUrl] is provided,
@@ -24,11 +25,16 @@ class UserAvatar extends StatelessWidget {
     final color = backgroundColor ?? AppTheme.avatarColor(username);
     final initial = username.isNotEmpty ? username[0].toUpperCase() : '?';
     final hasPhoto = avatarUrl != null && avatarUrl!.isNotEmpty;
+    final resolvedUrl = hasPhoto
+        ? (avatarUrl!.startsWith('http')
+            ? avatarUrl!
+            : '${AppConstants.serverBaseUrl}$avatarUrl')
+        : null;
 
     return CircleAvatar(
       radius: radius,
       backgroundColor: color,
-      backgroundImage: hasPhoto ? NetworkImage(avatarUrl!) : null,
+      backgroundImage: resolvedUrl != null ? NetworkImage(resolvedUrl) : null,
       child: hasPhoto
           ? null
           : Text(

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/contact.dart';
+import '../models/group_message.dart';
 import '../models/message.dart';
 import '../models/call_record.dart';
 import '../../core/constants.dart';
@@ -19,7 +20,7 @@ class LocalDatabase {
     final path = join(await getDatabasesPath(), AppConstants.dbName);
     return openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -53,6 +54,28 @@ class LocalDatabase {
     }
     if (oldVersion < 6) {
       await db.execute('ALTER TABLE contacts ADD COLUMN avatar_url TEXT');
+    }
+    if (oldVersion < 7) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS group_messages (
+          id TEXT PRIMARY KEY,
+          group_id TEXT NOT NULL,
+          sender_id TEXT NOT NULL,
+          sender_username TEXT NOT NULL,
+          sender_avatar_url TEXT,
+          content TEXT NOT NULL DEFAULT '',
+          attachment_url TEXT,
+          attachment_type TEXT,
+          attachment_name TEXT,
+          attachment_size INTEGER,
+          reply_to_id TEXT,
+          reactions TEXT,
+          is_deleted INTEGER NOT NULL DEFAULT 0,
+          edited_at TEXT,
+          created_at TEXT NOT NULL,
+          is_outgoing INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
     }
   }
 
@@ -108,6 +131,27 @@ class LocalDatabase {
         started_at TEXT NOT NULL,
         ended_at TEXT,
         duration_seconds INTEGER
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS group_messages (
+        id TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL,
+        sender_id TEXT NOT NULL,
+        sender_username TEXT NOT NULL,
+        sender_avatar_url TEXT,
+        content TEXT NOT NULL DEFAULT '',
+        attachment_url TEXT,
+        attachment_type TEXT,
+        attachment_name TEXT,
+        attachment_size INTEGER,
+        reply_to_id TEXT,
+        reactions TEXT,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        edited_at TEXT,
+        created_at TEXT NOT NULL,
+        is_outgoing INTEGER NOT NULL DEFAULT 0
       )
     ''');
 
@@ -282,6 +326,60 @@ class LocalDatabase {
       [myId],
     );
     return {for (final r in rows) r['sender_id'] as String: r['cnt'] as int};
+  }
+
+  // ── Group Messages ─────────────────────────────────────────
+  Future<void> upsertGroupMessage(GroupMessage m) async {
+    final d = await db;
+    await d.insert('group_messages', m.toDbMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<GroupMessage>> getGroupMessages(String groupId, {int limit = 100}) async {
+    final d = await db;
+    final rows = await d.query(
+      'group_messages',
+      where: 'group_id = ?',
+      whereArgs: [groupId],
+      orderBy: 'created_at DESC',
+      limit: limit,
+    );
+    final msgs = rows.map(GroupMessage.fromDbMap).toList();
+    msgs.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return msgs;
+  }
+
+  Future<void> updateGroupMessageContent(String id, String content, DateTime editedAt) async {
+    final d = await db;
+    await d.update('group_messages',
+        {'content': content, 'edited_at': editedAt.toIso8601String()},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> updateGroupMessageReactions(String id, Map<String, List<String>> reactions) async {
+    final d = await db;
+    await d.update('group_messages',
+        {'reactions': reactions.isEmpty ? null : jsonEncode(reactions)},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> markGroupMessageDeleted(String id) async {
+    final d = await db;
+    await d.update('group_messages', {'is_deleted': 1},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<GroupMessage?> getLastGroupMessage(String groupId) async {
+    final d = await db;
+    final rows = await d.query('group_messages',
+        where: 'group_id = ? AND is_deleted = 0', whereArgs: [groupId],
+        orderBy: 'created_at DESC', limit: 1);
+    return rows.isNotEmpty ? GroupMessage.fromDbMap(rows.first) : null;
+  }
+
+  Future<void> clearGroupMessages(String groupId) async {
+    final d = await db;
+    await d.delete('group_messages', where: 'group_id = ?', whereArgs: [groupId]);
   }
 
   // ── Call Records ───────────────────────────────────────────

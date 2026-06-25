@@ -317,6 +317,173 @@ function setupSignaling(io) {
       socket.emit('reaction-added', payload);
     });
 
+    // ── Group Messaging ────────────────────────────────────────
+
+    socket.on('group-send-message', async (data) => {
+      const { group_id, message_id, content, reply_to_id,
+              attachment_url, attachment_type, attachment_name, attachment_size } = data;
+      if (!group_id || !message_id) return;
+
+      // Verify active membership
+      const memberCheck = await db.query(
+        `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+        [group_id, userId]
+      );
+      if (memberCheck.rows.length === 0) return;
+
+      const senderRes = await db.query(
+        'SELECT username, virtual_id, avatar_url FROM users WHERE id = $1', [userId]
+      );
+      const sender = senderRes.rows[0];
+
+      await db.query(
+        `INSERT INTO group_messages (id, group_id, sender_id, content, reply_to_id,
+           attachment_url, attachment_type, attachment_name, attachment_size)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT DO NOTHING`,
+        [message_id, group_id, userId, content || '', reply_to_id || null,
+         attachment_url || null, attachment_type || null, attachment_name || null, attachment_size || null]
+      );
+
+      const msgRow = await db.query('SELECT created_at FROM group_messages WHERE id = $1', [message_id]);
+      const createdAt = msgRow.rows[0]?.created_at?.toISOString() || new Date().toISOString();
+
+      const payload = {
+        message_id, group_id,
+        sender_id: userId,
+        sender_username: sender.username,
+        sender_virtual_id: sender.virtual_id,
+        sender_avatar_url: sender.avatar_url || null,
+        content: content || '',
+        reply_to_id: reply_to_id || null,
+        attachment_url: attachment_url || null,
+        attachment_type: attachment_type || null,
+        attachment_name: attachment_name || null,
+        attachment_size: attachment_size || null,
+        created_at: createdAt,
+      };
+
+      // Deliver to all active members (except sender — ack separately)
+      const membersRes = await db.query(
+        `SELECT gm.user_id, u.fcm_token FROM group_members gm
+         JOIN users u ON u.id = gm.user_id
+         WHERE gm.group_id = $1 AND gm.status = 'active' AND gm.user_id != $2`,
+        [group_id, userId]
+      );
+      const groupRes = await db.query('SELECT name FROM groups WHERE id = $1', [group_id]);
+      const groupName = groupRes.rows[0]?.name || 'Group';
+
+      for (const m of membersRes.rows) {
+        const s = onlineUsers.get(m.user_id);
+        if (s) {
+          io.to(s).emit('group-message', payload);
+        } else {
+          const preview = (content || '').length > 60
+            ? (content || '').substring(0, 60) + '…'
+            : (content || attachment_type || 'Attachment');
+          sendPushNotification(m.fcm_token, {
+            type: 'group_message',
+            group_id,
+            group_name: groupName,
+            sender_username: sender.username,
+            preview,
+          });
+        }
+      }
+
+      // Ack to sender
+      socket.emit('group-message-ack', { message_id, group_id, created_at: createdAt });
+    });
+
+    socket.on('group-typing', async (data) => {
+      const { group_id } = data;
+      if (!group_id) return;
+      const memberCheck = await db.query(
+        `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+        [group_id, userId]
+      );
+      if (memberCheck.rows.length === 0) return;
+      const membersRes = await db.query(
+        `SELECT user_id FROM group_members WHERE group_id = $1 AND status = 'active' AND user_id != $2`,
+        [group_id, userId]
+      );
+      for (const m of membersRes.rows) {
+        const s = onlineUsers.get(m.user_id);
+        if (s) io.to(s).emit('group-user-typing', { group_id, user_id: userId });
+      }
+    });
+
+    socket.on('group-edit-message', async (data) => {
+      const { message_id, new_content, group_id } = data;
+      const result = await db.query(
+        `UPDATE group_messages SET content = $1, edited_at = NOW()
+         WHERE id = $2 AND sender_id = $3 RETURNING edited_at, group_id`,
+        [new_content, message_id, userId]
+      );
+      if (result.rowCount === 0) return;
+      const gid = group_id || result.rows[0].group_id;
+      const editedAt = result.rows[0].edited_at.toISOString();
+      const membersRes = await db.query(
+        `SELECT user_id FROM group_members WHERE group_id = $1 AND status = 'active'`,
+        [gid]
+      );
+      for (const m of membersRes.rows) {
+        const s = onlineUsers.get(m.user_id);
+        if (s) io.to(s).emit('group-message-edited', { message_id, group_id: gid, new_content, edited_at: editedAt });
+      }
+    });
+
+    socket.on('group-delete-message', async (data) => {
+      const { message_id, group_id } = data;
+      const result = await db.query(
+        `UPDATE group_messages SET is_deleted = true WHERE id = $1 AND sender_id = $2 RETURNING group_id`,
+        [message_id, userId]
+      );
+      if (result.rowCount === 0) return;
+      const gid = group_id || result.rows[0].group_id;
+      const membersRes = await db.query(
+        `SELECT user_id FROM group_members WHERE group_id = $1 AND status = 'active'`,
+        [gid]
+      );
+      for (const m of membersRes.rows) {
+        const s = onlineUsers.get(m.user_id);
+        if (s) io.to(s).emit('group-message-deleted', { message_id, group_id: gid });
+      }
+    });
+
+    socket.on('group-add-reaction', async (data) => {
+      const { message_id, emoji, group_id } = data;
+      if (!message_id || !emoji) return;
+
+      const msgRes = await db.query(
+        'SELECT reactions, group_id FROM group_messages WHERE id = $1', [message_id]
+      );
+      if (msgRes.rows.length === 0) return;
+
+      let reactions = msgRes.rows[0].reactions || {};
+      const gid = group_id || msgRes.rows[0].group_id;
+
+      const users = reactions[emoji] || [];
+      const idx = users.indexOf(userId);
+      if (idx === -1) {
+        reactions[emoji] = [...users, userId];
+      } else {
+        reactions[emoji] = users.filter(u => u !== userId);
+        if (reactions[emoji].length === 0) delete reactions[emoji];
+      }
+
+      await db.query('UPDATE group_messages SET reactions = $1 WHERE id = $2', [reactions, message_id]);
+
+      const membersRes = await db.query(
+        `SELECT user_id FROM group_members WHERE group_id = $1 AND status = 'active'`,
+        [gid]
+      );
+      const payload = { message_id, group_id: gid, reactions, reactor_id: userId };
+      for (const m of membersRes.rows) {
+        const s = onlineUsers.get(m.user_id);
+        if (s) io.to(s).emit('group-reaction-added', payload);
+      }
+    });
+
     // ── Disconnect ─────────────────────────────────────────────
 
     socket.on('disconnect', async () => {

@@ -23,6 +23,21 @@ enum SignalingEvent {
   messageEdited,
   messageDeleted,
   reactionAdded,
+  // Group events
+  groupMessage,
+  groupMessageAck,
+  groupMessageEdited,
+  groupMessageDeleted,
+  groupReactionAdded,
+  groupUserTyping,
+  groupJoinRequest,
+  groupMemberApproved,
+  groupMemberRejected,
+  groupMemberJoined,
+  groupMemberLeft,
+  groupMemberPromoted,
+  groupUpdated,
+  groupDeleted,
 }
 
 class SignalingMessage {
@@ -105,6 +120,36 @@ class SignalingService {
       final list = (data as List).cast<Map<dynamic, dynamic>>();
       _emit(SignalingEvent.contactsPresence, {'list': list});
     });
+
+    // Group events
+    _socket!.on('group-message', (data) =>
+        _emit(SignalingEvent.groupMessage, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-message-ack', (data) =>
+        _emit(SignalingEvent.groupMessageAck, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-message-edited', (data) =>
+        _emit(SignalingEvent.groupMessageEdited, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-message-deleted', (data) =>
+        _emit(SignalingEvent.groupMessageDeleted, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-reaction-added', (data) =>
+        _emit(SignalingEvent.groupReactionAdded, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-user-typing', (data) =>
+        _emit(SignalingEvent.groupUserTyping, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-join-request', (data) =>
+        _emit(SignalingEvent.groupJoinRequest, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-member-approved', (data) =>
+        _emit(SignalingEvent.groupMemberApproved, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-member-rejected', (data) =>
+        _emit(SignalingEvent.groupMemberRejected, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-member-joined', (data) =>
+        _emit(SignalingEvent.groupMemberJoined, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-member-left', (data) =>
+        _emit(SignalingEvent.groupMemberLeft, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-member-promoted', (data) =>
+        _emit(SignalingEvent.groupMemberPromoted, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-updated', (data) =>
+        _emit(SignalingEvent.groupUpdated, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-deleted', (data) =>
+        _emit(SignalingEvent.groupDeleted, Map<String, dynamic>.from(data as Map)));
   }
 
   void _emit(SignalingEvent event, Map<String, dynamic> data) {
@@ -211,6 +256,68 @@ class SignalingService {
       'message_id': messageId,
       'emoji': emoji,
       'recipient_virtual_id': recipientVirtualId,
+    });
+  }
+
+  // ── Outbound: Groups ───────────────────────────────────────
+
+  void sendGroupMessage({
+    required String groupId,
+    required String messageId,
+    required String content,
+    String? replyToId,
+    String? attachmentUrl,
+    String? attachmentType,
+    String? attachmentName,
+    int? attachmentSize,
+  }) {
+    _socket?.emit('group-send-message', {
+      'group_id': groupId,
+      'message_id': messageId,
+      'content': content,
+      if (replyToId != null) 'reply_to_id': replyToId,
+      if (attachmentUrl != null) 'attachment_url': attachmentUrl,
+      if (attachmentType != null) 'attachment_type': attachmentType,
+      if (attachmentName != null) 'attachment_name': attachmentName,
+      if (attachmentSize != null) 'attachment_size': attachmentSize,
+    });
+  }
+
+  void sendGroupTyping({required String groupId}) {
+    _socket?.emit('group-typing', {'group_id': groupId});
+  }
+
+  void emitGroupEditMessage({
+    required String messageId,
+    required String groupId,
+    required String newContent,
+  }) {
+    _socket?.emit('group-edit-message', {
+      'message_id': messageId,
+      'group_id': groupId,
+      'new_content': newContent,
+    });
+  }
+
+  void emitGroupDeleteMessage({
+    required String messageId,
+    required String groupId,
+  }) {
+    _socket?.emit('group-delete-message', {
+      'message_id': messageId,
+      'group_id': groupId,
+    });
+  }
+
+  void emitGroupReaction({
+    required String messageId,
+    required String groupId,
+    required String emoji,
+  }) {
+    _socket?.emit('group-add-reaction', {
+      'message_id': messageId,
+      'group_id': groupId,
+      'emoji': emoji,
     });
   }
 

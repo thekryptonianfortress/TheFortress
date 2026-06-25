@@ -11,6 +11,7 @@ const contactsRoutes = require('./routes/contacts');
 const messagesRoutes = require('./routes/messages');
 const mediaRoutes = require('./routes/media');
 const turnRoutes = require('./routes/turn');
+const groupsRoutes = require('./routes/groups');
 const { setupSignaling } = require('./signaling');
 
 const app = express();
@@ -61,6 +62,7 @@ app.use('/contacts', contactsRoutes);
 app.use('/messages', messagesRoutes);
 app.use('/media', mediaRoutes);
 app.use('/turn-credentials', turnRoutes);
+app.use('/groups', groupsRoutes);
 
 // WebSocket signaling
 setupSignaling(io);

@@ -6,6 +6,16 @@ import '../../../providers/messages_provider.dart';
 import '../../../data/models/contact.dart';
 import '../../widgets/contact_tile.dart';
 
+String _attachmentLabel(String type) {
+  switch (type) {
+    case 'image': return '📷 Photo';
+    case 'gif': return '🎞 GIF';
+    case 'video': return '🎥 Video';
+    case 'audio': return '🎤 Voice note';
+    default: return '📎 File';
+  }
+}
+
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
   @override
@@ -174,9 +184,15 @@ class _ContactsScreenState extends State<ContactsScreen> {
         final c = contacts[i];
         final chat = msgProvider.getChat(c.contactId);
         final last = chat.isNotEmpty ? chat.last : null;
-        final lastText = last != null
-            ? (last.decryptedContent ?? last.encryptedContent)
-            : null;
+        String? lastText;
+        if (last != null) {
+          final body = last.decryptedContent ?? '';
+          if (body.isEmpty && last.attachmentType != null) {
+            lastText = _attachmentLabel(last.attachmentType!);
+          } else {
+            lastText = body.isNotEmpty ? body : last.encryptedContent;
+          }
+        }
 
         return ContactTile(
           contact: c,

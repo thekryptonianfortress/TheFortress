@@ -12,8 +12,10 @@ import 'dart:async';
 import '../../../services/signaling_service.dart';
 import '../../../services/webrtc_service.dart' show CallState;
 import '../contacts/contacts_screen.dart';
+import '../groups/groups_list_screen.dart';
 import '../settings/settings_screen.dart';
 import '../../widgets/user_avatar.dart';
+import '../../../providers/groups_provider.dart';
 import 'package:intl/intl.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -126,7 +128,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     return Scaffold(
       backgroundColor: AppTheme.background,
-      appBar: _tab == 2
+      appBar: _tab == 3
           ? null // Settings has its own AppBar via SliverAppBar
           : AppBar(
               backgroundColor: AppTheme.inputBg,
@@ -143,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    _tab == 0 ? 'Chats' : 'Calls',
+                    _tab == 0 ? 'Chats' : _tab == 1 ? 'Calls' : 'Groups',
                     style: const TextStyle(
                       color: AppTheme.onSurface,
                       fontSize: 20,
@@ -161,6 +163,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         Navigator.pushNamed(context, '/contacts/add'),
                     tooltip: 'Add contact',
                   ),
+                if (_tab == 2)
+                  IconButton(
+                    icon: const Icon(Icons.add_rounded,
+                        color: AppTheme.onSurface, size: 26),
+                    onPressed: () {
+                      showModalBottomSheet(
+                        context: context,
+                        backgroundColor: AppTheme.surface,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                        ),
+                        builder: (_) => SafeArea(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 36, height: 4,
+                                margin: const EdgeInsets.only(top: 12, bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.muted.withValues(alpha: 0.4),
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                              ListTile(
+                                leading: const Icon(Icons.group_add_rounded, color: AppTheme.primary),
+                                title: const Text('Create group'),
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  Navigator.pushNamed(context, '/groups/create');
+                                },
+                              ),
+                              ListTile(
+                                leading: const Icon(Icons.link_rounded, color: AppTheme.accent),
+                                title: const Text('Join with code'),
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  Navigator.pushNamed(context, '/groups/join');
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    tooltip: 'Create or join group',
+                  ),
                 const SizedBox(width: 4),
               ],
             ),
@@ -169,6 +218,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         children: [
           const ContactsScreen(),
           _CallHistoryTab(records: _callHistory),
+          const GroupsListScreen(),
           const SettingsScreen(),
         ],
       ),
@@ -180,19 +230,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onDestinationSelected: (i) {
           setState(() => _tab = i);
           if (i == 1) _loadCallHistory();
+          if (i == 2) context.read<GroupsProvider>().loadGroups();
         },
-        destinations: const [
-          NavigationDestination(
+        destinations: [
+          const NavigationDestination(
             icon: Icon(Icons.chat_bubble_outline_rounded),
             selectedIcon: Icon(Icons.chat_bubble_rounded),
             label: 'Chats',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.call_outlined),
             selectedIcon: Icon(Icons.call_rounded),
             label: 'Calls',
           ),
           NavigationDestination(
+            icon: _GroupsBadge(child: const Icon(Icons.group_outlined)),
+            selectedIcon: _GroupsBadge(child: const Icon(Icons.group_rounded)),
+            label: 'Groups',
+          ),
+          const NavigationDestination(
             icon: Icon(Icons.settings_outlined),
             selectedIcon: Icon(Icons.settings_rounded),
             label: 'Settings',
@@ -204,6 +260,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 }
 
 // ── Call history ──────────────────────────────────────────────
+
+class _GroupsBadge extends StatelessWidget {
+  final Widget child;
+  const _GroupsBadge({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = context.watch<GroupsProvider>().totalPendingRequests;
+    if (pending == 0) return child;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        child,
+        Positioned(
+          right: -4, top: -4,
+          child: Container(
+            width: 14, height: 14,
+            decoration: const BoxDecoration(color: AppTheme.accent, shape: BoxShape.circle),
+            child: Center(
+              child: Text('$pending',
+                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _CallHistoryTab extends StatelessWidget {
   final List<CallRecord> records;
