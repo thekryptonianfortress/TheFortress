@@ -7,6 +7,7 @@ import '../../../data/local/database.dart';
 import '../../../data/models/call_record.dart';
 import '../../../providers/call_provider.dart';
 import '../../../providers/contacts_provider.dart';
+import '../../../providers/messages_provider.dart';
 import 'dart:async';
 import '../../../services/signaling_service.dart';
 import '../../../services/webrtc_service.dart' show CallState;
@@ -76,6 +77,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkPendingNotificationChat();
+      if (mounted) {
+        // Re-sync contacts from server and refresh all message previews from
+        // local DB so the chat list is always current when the app comes back.
+        context.read<ContactsProvider>().loadContacts();
+        context.read<MessagesProvider>().refreshFromDb();
+      }
     }
   }
 

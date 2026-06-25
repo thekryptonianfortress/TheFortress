@@ -20,6 +20,7 @@ class MessageBubble extends StatefulWidget {
   final VoidCallback? onReply;
   final VoidCallback? onLongPress;
   final void Function(String emoji)? onReact;
+  final String? nextAudioSource;
 
   const MessageBubble({
     super.key,
@@ -32,6 +33,7 @@ class MessageBubble extends StatefulWidget {
     this.onReply,
     this.onLongPress,
     this.onReact,
+    this.nextAudioSource,
   });
 
   @override
@@ -494,6 +496,7 @@ class _MessageBubbleState extends State<MessageBubble>
             source: url,
             effectId: effectId,
             isOutgoing: isMe,
+            nextSource: widget.nextAudioSource,
           ),
         );
       } else {

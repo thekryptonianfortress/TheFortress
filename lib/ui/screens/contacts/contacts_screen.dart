@@ -158,10 +158,20 @@ class _ContactsScreenState extends State<ContactsScreen> {
       );
     }
 
+    // Sort contacts so the most recently active conversation is always at top.
+    final contacts = provider.contacts.toList()
+      ..sort((a, b) {
+        final aChat = msgProvider.getChat(a.contactId);
+        final bChat = msgProvider.getChat(b.contactId);
+        final aTime = aChat.isNotEmpty ? aChat.last.createdAt : DateTime(0);
+        final bTime = bChat.isNotEmpty ? bChat.last.createdAt : DateTime(0);
+        return bTime.compareTo(aTime);
+      });
+
     return ListView.builder(
-      itemCount: provider.contacts.length,
+      itemCount: contacts.length,
       itemBuilder: (ctx, i) {
-        final c = provider.contacts[i];
+        final c = contacts[i];
         final chat = msgProvider.getChat(c.contactId);
         final last = chat.isNotEmpty ? chat.last : null;
         final lastText = last != null

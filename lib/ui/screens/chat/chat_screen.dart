@@ -63,7 +63,7 @@ class _ChatScreenState extends State<ChatScreen> {
           .read<MessagesProvider>()
           .markMessagesRead(widget.contact.contactId);
       await _decryptAll();
-      _scrollToBottom(animated: false);
+      // reverse: true ListView always opens at the bottom — no manual scroll needed.
     });
 
     _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
@@ -75,8 +75,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _onScroll() {
     if (!_scrollCtrl.hasClients) return;
-    final nearBottom =
-        _scrollCtrl.position.pixels >= _scrollCtrl.position.maxScrollExtent - 120;
+    // With reverse: true, position 0 is the bottom (latest messages).
+    final nearBottom = _scrollCtrl.position.pixels <= 120;
     if (nearBottom == _showScrollToBottom) {
       setState(() => _showScrollToBottom = !nearBottom);
     }
@@ -110,18 +110,18 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) setState(() {});
   }
 
-  void _scrollToBottom({bool animated = false}) {
+  void _scrollToBottom({bool animated = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) {
-        if (animated) {
-          _scrollCtrl.animateTo(
-            _scrollCtrl.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOut,
-          );
-        } else {
-          _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
-        }
+      if (!mounted || !_scrollCtrl.hasClients) return;
+      // With reverse: true, position 0 is the bottom.
+      if (animated) {
+        _scrollCtrl.animateTo(
+          0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollCtrl.jumpTo(0);
       }
     });
   }
@@ -969,6 +969,17 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
 
+      // Find the next audio message after this one for auto-play chaining
+      String? nextAudioSource;
+      if (m.attachmentType == 'audio' && m.attachmentUrl != null) {
+        for (int j = i + 1; j < msgs.length; j++) {
+          if (msgs[j].attachmentType == 'audio' && msgs[j].attachmentUrl != null) {
+            nextAudioSource = MediaService.fullUrl(msgs[j].attachmentUrl!);
+            break;
+          }
+        }
+      }
+
       items.add(MessageBubble(
         key: ValueKey(m.id),
         message: m,
@@ -985,6 +996,7 @@ class _ChatScreenState extends State<ChatScreen> {
           emoji: emoji,
           recipientVirtualId: widget.contact.virtualId,
         ),
+        nextAudioSource: nextAudioSource,
       ));
     }
 
@@ -995,8 +1007,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return ListView(
       controller: _scrollCtrl,
+      reverse: true,
       padding: const EdgeInsets.only(top: 8, bottom: 8),
-      children: items,
+      children: items.reversed.toList(),
     );
   }
 

@@ -67,6 +67,39 @@ class MessagesProvider extends ChangeNotifier {
     _activeChatPeerId = null;
   }
 
+  /// Re-read last messages and unread counts from local SQLite and merge into
+  /// the in-memory state. Safe to call at any time (resume, reconnect, etc.).
+  Future<void> refreshFromDb() async {
+    final myId = await SecureStorage.getUserId() ?? '';
+    if (myId.isEmpty) return;
+
+    final lastMessages = await _db.getLastMessages(myId);
+    final counts = await _db.getUnreadCounts(myId);
+
+    for (final entry in lastMessages.entries) {
+      final peerId = entry.key;
+      final latest = entry.value;
+      final seeded = latest.copyWith(decryptedContent: latest.encryptedContent);
+      final existing = _chats[peerId];
+      if (existing == null || existing.isEmpty) {
+        _chats[peerId] = [seeded];
+      } else if (!existing.any((m) => m.id == latest.id) &&
+          latest.createdAt.isAfter(existing.last.createdAt)) {
+        // DB has a newer message not yet in memory — append it so the tile
+        // preview and sort order update immediately.
+        _chats[peerId] = [...existing, seeded];
+      }
+    }
+
+    for (final entry in counts.entries) {
+      if (_activeChatPeerId != entry.key) {
+        _unreadCounts[entry.key] = entry.value;
+      }
+    }
+
+    notifyListeners();
+  }
+
   void _listenToSignaling() {
     _sub = _signaling.stream.listen((msg) async {
       switch (msg.event) {
@@ -91,10 +124,10 @@ class MessagesProvider extends ChangeNotifier {
         case SignalingEvent.connected:
           await _messaging.flushPendingMessages();
           await _processPendingReplies();
-          // Only refresh chats that were explicitly opened this session.
-          // Seeded-only chats (_initFromLocalDb) are excluded to avoid
-          // pulling stale 'read' statuses from the server onto messages
-          // that are still in-flight.
+          // Re-seed all contact tile previews from local DB so the list is
+          // immediately current (socket delivers any missing messages on top).
+          await refreshFromDb();
+          // Full server reload for chats explicitly opened this session.
           for (final peerId in _loadedPeerIds.toList()) {
             await loadChat(peerId);
           }
