@@ -4,6 +4,7 @@ import 'dart:developer' as dev;
 import 'dart:io';
 import 'package:bonsoir/bonsoir.dart';
 import 'package:uuid/uuid.dart';
+import '../data/local/secure_storage.dart';
 
 /// LAN peer-to-peer transport for offline messaging and call signaling.
 ///
@@ -35,6 +36,7 @@ class LanTransport {
   final _uuid = const Uuid();
 
   String? _myVirtualId;
+  String _myUserId = '';
 
   /// Called when a LAN event arrives — wired to SignalingService._handleLanEvent.
   void Function(String event, Map<String, dynamic> data)? _inject;
@@ -49,7 +51,12 @@ class LanTransport {
   // callId → peer virtualId (for routing reply signals)
   final Map<String, String> _callPeerMap = {};
 
+  // peer userId → peer virtualId (for routing read receipts)
+  final Map<String, String> _userToVId = {};
+
   Set<String> get reachablePeers => Set.unmodifiable(_peers.keys);
+  String get myUserId => _myUserId;
+  String? getVirtualIdForUser(String userId) => _userToVId[userId];
 
   bool isReachable(String virtualId) {
     final ws = _peers[virtualId];
@@ -73,6 +80,7 @@ class LanTransport {
   Future<void> start(String virtualId) async {
     if (_myVirtualId != null) return; // already running
     _myVirtualId = virtualId;
+    _myUserId = await SecureStorage.getUserId() ?? '';
     await _startServer();
     await _startAdvertising();
     await _startDiscovery();
@@ -226,6 +234,26 @@ class LanTransport {
     final callId = data['call_id'] as String?;
     if (callId != null) _callPeerMap[callId] = fromVId;
 
+    if (event == 'new-message') {
+      final msgId = data['message_id'] as String?;
+      final senderId = data['sender_id'] as String?;
+      final senderVId = data['sender_virtual_id'] as String?;
+
+      // Cache userId → virtualId so read receipts can be routed by userId
+      if (senderId != null && senderVId != null) {
+        _userToVId[senderId] = senderVId;
+      }
+
+      // Acknowledge delivery so the sender's tick updates
+      if (msgId != null && senderId != null) {
+        send(fromVId, 'message-ack', {
+          'message_id': msgId,
+          'recipient_id': senderId,
+          'status': 'delivered',
+        });
+      }
+    }
+
     _inject?.call(event, data);
   }
 
@@ -273,6 +301,7 @@ class LanTransport {
     }
     _peers.clear();
     _callPeerMap.clear();
+    _userToVId.clear();
     _broadcast = null;
     _discovery = null;
     _server = null;

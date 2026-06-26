@@ -297,11 +297,28 @@ class SignalingService {
   }
 
   void sendTyping({required String recipientVirtualId}) {
+    if (_lan != null && _lan!.isReachable(recipientVirtualId)) {
+      _lan!.send(recipientVirtualId, 'user-typing', {
+        'sender_id': _lan!.myUserId,
+      });
+      return;
+    }
     _socket?.emit('typing', {'recipient_virtual_id': recipientVirtualId});
   }
 
   void sendReadReceipt(
       {required List<String> messageIds, required String senderId}) {
+    if (_lan != null) {
+      // senderId = the peer's userId (original message sender we're acking)
+      final peerVId = _lan!.getVirtualIdForUser(senderId);
+      if (peerVId != null && _lan!.isReachable(peerVId)) {
+        _lan!.send(peerVId, 'messages-read', {
+          'message_ids': messageIds,
+          'reader_id': _lan!.myUserId,
+        });
+        return;
+      }
+    }
     _socket?.emit('read-receipt', {
       'message_ids': messageIds,
       'sender_id': senderId,
@@ -313,6 +330,14 @@ class SignalingService {
     required String newContent,
     required String recipientVirtualId,
   }) {
+    if (_lan != null && _lan!.isReachable(recipientVirtualId)) {
+      _lan!.send(recipientVirtualId, 'message-edited', {
+        'message_id': messageId,
+        'new_content': newContent,
+        'edited_at': DateTime.now().toIso8601String(),
+      });
+      return;
+    }
     _socket?.emit('edit-message', {
       'message_id': messageId,
       'new_content': newContent,
@@ -324,6 +349,12 @@ class SignalingService {
     required String messageId,
     required String recipientVirtualId,
   }) {
+    if (_lan != null && _lan!.isReachable(recipientVirtualId)) {
+      _lan!.send(recipientVirtualId, 'message-deleted', {
+        'message_id': messageId,
+      });
+      return;
+    }
     _socket?.emit('delete-message', {
       'message_id': messageId,
       'recipient_virtual_id': recipientVirtualId,
