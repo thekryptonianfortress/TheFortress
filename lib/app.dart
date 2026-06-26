@@ -3,12 +3,14 @@ import 'package:provider/provider.dart';
 import 'core/theme.dart';
 import 'data/models/contact.dart';
 import 'providers/auth_provider.dart';
+import 'providers/auto_download_provider.dart';
 import 'providers/backup_provider.dart';
 import 'providers/call_provider.dart';
 import 'providers/contacts_provider.dart';
 import 'providers/groups_provider.dart';
 import 'providers/messages_provider.dart';
 import 'services/groups_service.dart';
+import 'services/media_service.dart';
 import 'services/messaging_service.dart';
 import 'services/mdns_service.dart';
 import 'services/signaling_service.dart';
@@ -35,10 +37,13 @@ class PagerApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final signaling = SignalingService();
     final webrtc = WebRTCService(signaling);
+    final autoDownload = AutoDownloadProvider();
+    MediaService.onBytesDownloaded = (bytes) => autoDownload.recordBytesDownloaded(bytes);
 
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider.value(value: autoDownload),
         ChangeNotifierProvider(create: (_) => BackupProvider()),
         ChangeNotifierProvider(create: (_) => ContactsProvider(signaling)),
         ChangeNotifierProvider(

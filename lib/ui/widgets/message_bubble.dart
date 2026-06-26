@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../providers/auto_download_provider.dart';
 import 'package:intl/intl.dart';
 import 'package:open_file/open_file.dart';
 import '../../core/theme.dart';
@@ -435,6 +437,7 @@ class _MessageBubbleState extends State<MessageBubble>
     final metaColor = Colors.white.withValues(alpha: isMe ? 0.6 : 0.45);
     final msg = widget.message;
     final hasAttachment = msg.attachmentUrl != null;
+    final autoDownload = context.read<AutoDownloadProvider>();
 
     Widget? attachmentWidget;
     if (hasAttachment) {
@@ -485,6 +488,7 @@ class _MessageBubbleState extends State<MessageBubble>
           url: url,
           filename: filename,
           size: msg.attachmentSize,
+          shouldAutoDownload: autoDownload.shouldAutoDownload(MediaType.videos),
         );
       } else if (type == 'audio') {
         // Effect id is encoded in attachmentName after '#', e.g. "voice_note.m4a#deep"
@@ -497,6 +501,7 @@ class _MessageBubbleState extends State<MessageBubble>
             effectId: effectId,
             isOutgoing: isMe,
             nextSource: widget.nextAudioSource,
+            shouldAutoDownload: autoDownload.shouldAutoDownload(MediaType.audio),
           ),
         );
       } else {
@@ -703,11 +708,13 @@ class _VideoThumbnailBubble extends StatefulWidget {
   final String url;
   final String filename;
   final int? size;
+  final bool shouldAutoDownload;
 
   const _VideoThumbnailBubble({
     required this.url,
     required this.filename,
     this.size,
+    this.shouldAutoDownload = true,
   });
 
   @override
@@ -721,7 +728,7 @@ class _VideoThumbnailBubbleState extends State<_VideoThumbnailBubble> {
   @override
   void initState() {
     super.initState();
-    _loadThumb();
+    if (widget.shouldAutoDownload) _loadThumb();
   }
 
   Future<void> _loadThumb() async {
@@ -732,13 +739,16 @@ class _VideoThumbnailBubbleState extends State<_VideoThumbnailBubble> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) =>
-              VideoPlayerScreen(url: widget.url, filename: widget.filename),
-        ),
-      ),
+      onTap: () {
+        if (!_loaded) _loadThumb();
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                VideoPlayerScreen(url: widget.url, filename: widget.filename),
+          ),
+        );
+      },
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: Stack(

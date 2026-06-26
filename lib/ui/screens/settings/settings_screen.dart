@@ -2,12 +2,12 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/backup_provider.dart';
 import 'backup_screen.dart';
+import 'data_usage_screen.dart';
 import 'profile_edit_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -164,17 +164,14 @@ class SettingsScreen extends StatelessWidget {
               // Data & Storage
               _SectionHeader(title: 'Data & Storage'),
               _SettingsTile(
-                icon: Icons.photo_library_rounded,
+                icon: Icons.storage_rounded,
                 iconColor: const Color(0xFF6FB9F0),
-                title: 'Media Auto-Download',
-                subtitle: 'Images auto-download on Wi-Fi',
-              ),
-              _SettingsTile(
-                icon: Icons.delete_sweep_rounded,
-                iconColor: const Color(0xFF6FB9F0),
-                title: 'Clear Cache',
-                subtitle: 'Free up device storage',
-                onTap: () => _confirmClearCache(context),
+                title: 'Storage & Data',
+                subtitle: 'Auto-download, cache & network usage',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const DataUsageScreen()),
+                ),
               ),
 
               const SizedBox(height: 8),
@@ -244,48 +241,6 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Future<void> _confirmClearCache(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Clear Cache'),
-        content: const Text(
-            'This will delete locally cached media files. Downloaded files will need to be re-downloaded.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Clear', style: TextStyle(color: AppTheme.danger)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true && context.mounted) {
-      try {
-        final tmpDir = await getTemporaryDirectory();
-        final files = tmpDir.listSync();
-        for (final f in files) {
-          try {
-            f.deleteSync(recursive: true);
-          } catch (_) {}
-        }
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Cache cleared')),
-          );
-        }
-      } catch (_) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to clear cache')),
-          );
-        }
-      }
-    }
   }
 
   Future<void> _confirmSignOut(

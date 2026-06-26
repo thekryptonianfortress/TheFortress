@@ -31,6 +31,10 @@ class MediaService {
 
   static const int maxUploadBytes = 100 * 1024 * 1024; // 100 MB
 
+  /// Called with the byte count whenever a file is freshly downloaded (not cache hit).
+  /// Wire this up in app.dart to AutoDownloadProvider.recordBytesDownloaded().
+  static void Function(int bytes)? onBytesDownloaded;
+
   // ── Picking ──────────────────────────────────────────────
 
   /// Pick an image or GIF from gallery.
@@ -181,6 +185,9 @@ class MediaService {
       await sink.flush();
       await sink.close();
       onProgress?.call(1.0);
+      // Notify data-usage tracker with actual bytes written
+      final fileSize = await dest.length();
+      onBytesDownloaded?.call(fileSize);
       return dest;
     } catch (e) {
       if (dest.existsSync()) dest.deleteSync();

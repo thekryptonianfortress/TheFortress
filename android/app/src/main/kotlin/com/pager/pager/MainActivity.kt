@@ -3,6 +3,7 @@ package com.pager.pager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.media.AudioAttributes
@@ -10,6 +11,7 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.media.Ringtone
+import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import io.flutter.embedding.android.FlutterActivity
@@ -19,6 +21,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val ringtoneChannel = "pager/ringtone"
     private val notifChannel = "pager/notification"
+    private val networkInfoChannel = "pager/network_info"
     private var ringtone: Ringtone? = null
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
@@ -74,6 +77,22 @@ class MainActivity : FlutterActivity() {
                         ringtone?.stop()
                         ringtone = null
                         result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // Network info channel — roaming detection
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, networkInfoChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "isRoaming" -> {
+                        try {
+                            val tm = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                            result.success(tm.isNetworkRoaming)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
                     }
                     else -> result.notImplemented()
                 }

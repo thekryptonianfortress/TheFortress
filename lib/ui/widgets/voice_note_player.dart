@@ -61,6 +61,8 @@ class VoiceNotePlayer extends StatefulWidget {
   /// Source URL of the next voice note in the list. When this player finishes,
   /// it signals [_autoPlaySource] so the next player auto-starts.
   final String? nextSource;
+  /// If false, the audio is not downloaded until the user taps play.
+  final bool shouldAutoDownload;
 
   const VoiceNotePlayer({
     super.key,
@@ -70,6 +72,7 @@ class VoiceNotePlayer extends StatefulWidget {
     this.isOutgoing = false,
     this.autoLoad = false,
     this.nextSource,
+    this.shouldAutoDownload = true,
   });
 
   @override
@@ -152,10 +155,11 @@ class _VoiceNotePlayerState extends State<VoiceNotePlayer>
     // Auto-play when signaled as next
     _autoPlaySource.addListener(_onAutoPlaySource);
 
-    // Network sources: download & cache immediately so playback is instant.
+    // Network sources: download & cache if auto-download is enabled.
+    // When disabled, user taps play to trigger download on demand.
     // Local files (preview sheet): load right away.
     if (!widget.isFile) {
-      _downloadAndLoad();
+      if (widget.shouldAutoDownload) _downloadAndLoad();
     } else if (widget.autoLoad || widget.isFile) {
       _load();
     }
