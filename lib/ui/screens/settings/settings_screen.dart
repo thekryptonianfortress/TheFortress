@@ -192,7 +192,7 @@ class SettingsScreen extends StatelessWidget {
                 iconColor: const Color(0xFF9371E8),
                 title: 'LAN Mesh Fallback',
                 subtitle:
-                    'Works on local network without internet',
+                    'Direct messaging & calls on local Wi-Fi without internet',
                 trailing: const Icon(Icons.check_circle_rounded,
                     size: 18, color: Color(0xFF9371E8)),
               ),

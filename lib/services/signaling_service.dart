@@ -3,6 +3,7 @@ import 'dart:developer' as dev;
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../core/constants.dart';
 import '../data/local/secure_storage.dart';
+import 'lan_transport.dart';
 
 enum SignalingEvent {
   connected,
@@ -52,9 +53,39 @@ class SignalingService {
   io.Socket? _socket;
   final _controller = StreamController<SignalingMessage>.broadcast();
   bool _isConnected = false;
+  LanTransport? _lan;
 
   Stream<SignalingMessage> get stream => _controller.stream;
   bool get isConnected => _isConnected;
+
+  /// Wire up LAN transport — call this once after the transport is created.
+  void setLanTransport(LanTransport lan) {
+    _lan = lan;
+    lan.setInjectCallback((event, data) {
+      final sigEvent = _lanEventMap[event];
+      if (sigEvent != null) _emit(sigEvent, data);
+    });
+  }
+
+  /// Inject a synthetic event into the stream (used for LAN-received events).
+  void injectEvent(SignalingEvent event, Map<String, dynamic> data) {
+    _emit(event, data);
+  }
+
+  static const Map<String, SignalingEvent> _lanEventMap = {
+    'new-message': SignalingEvent.newMessage,
+    'message-ack': SignalingEvent.messageAck,
+    'incoming-call': SignalingEvent.incomingCall,
+    'call-answered': SignalingEvent.callAnswered,
+    'call-rejected': SignalingEvent.callRejected,
+    'call-ended': SignalingEvent.callEnded,
+    'ice-candidate': SignalingEvent.iceCandidate,
+    'user-typing': SignalingEvent.userTyping,
+    'messages-read': SignalingEvent.messagesRead,
+    'message-edited': SignalingEvent.messageEdited,
+    'message-deleted': SignalingEvent.messageDeleted,
+    'reaction-added': SignalingEvent.reactionAdded,
+  };
 
   Future<void> connect() async {
     if (_socket != null) return;
@@ -170,6 +201,20 @@ class SignalingService {
     required String callerUsername,
     required String callerVirtualId,
   }) {
+    if (_lan != null && _lan!.isReachable(targetVirtualId)) {
+      // Generate callId locally (normally the server assigns this)
+      final callId = _lan!.generateCallId();
+      _lan!.trackCall(callId, targetVirtualId);
+      _lan!.send(targetVirtualId, 'incoming-call', {
+        'call_id': callId,
+        'caller_virtual_id': callerVirtualId,
+        'caller_username': callerUsername,
+        'sdp': sdp,
+      });
+      // Inject call-offer-ack locally so CallProvider gets the callId
+      _emit(SignalingEvent.callOfferAck, {'call_id': callId});
+      return;
+    }
     _socket?.emit('call-offer', {
       'target_virtual_id': targetVirtualId,
       'sdp': sdp,
@@ -179,17 +224,49 @@ class SignalingService {
   }
 
   void sendCallAnswer({required String callId, required Map<String, dynamic> sdp}) {
+    if (_lan != null) {
+      final peerVId = _lan!.getPeerForCall(callId);
+      if (peerVId != null && _lan!.isReachable(peerVId)) {
+        _lan!.send(peerVId, 'call-answered', {'call_id': callId, 'sdp': sdp});
+        return;
+      }
+    }
     _socket?.emit('call-answer', {'call_id': callId, 'sdp': sdp});
   }
 
-  void sendCallReject(String callId) =>
-      _socket?.emit('call-reject', {'call_id': callId});
+  void sendCallReject(String callId) {
+    if (_lan != null) {
+      final peerVId = _lan!.getPeerForCall(callId);
+      if (peerVId != null && _lan!.isReachable(peerVId)) {
+        _lan!.send(peerVId, 'call-rejected', {'call_id': callId});
+        _lan!.clearCall(callId);
+        return;
+      }
+    }
+    _socket?.emit('call-reject', {'call_id': callId});
+  }
 
-  void sendCallEnd(String callId) =>
-      _socket?.emit('call-end', {'call_id': callId});
+  void sendCallEnd(String callId) {
+    if (_lan != null) {
+      final peerVId = _lan!.getPeerForCall(callId);
+      if (peerVId != null && _lan!.isReachable(peerVId)) {
+        _lan!.send(peerVId, 'call-ended', {'call_id': callId});
+        _lan!.clearCall(callId);
+        return;
+      }
+    }
+    _socket?.emit('call-end', {'call_id': callId});
+  }
 
   void sendIceCandidate(
       {required String callId, required Map<String, dynamic> candidate}) {
+    if (_lan != null) {
+      final peerVId = _lan!.getPeerForCall(callId);
+      if (peerVId != null && _lan!.isReachable(peerVId)) {
+        _lan!.send(peerVId, 'ice-candidate', {'call_id': callId, 'candidate': candidate});
+        return;
+      }
+    }
     _socket?.emit('ice-candidate', {'call_id': callId, 'candidate': candidate});
   }
 

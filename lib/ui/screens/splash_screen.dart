@@ -7,6 +7,7 @@ import '../../core/crypto_utils.dart';
 import '../../data/local/secure_storage.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/auth_service.dart';
+import '../../services/lan_transport.dart';
 import '../../services/notification_service.dart';
 import '../../services/signaling_service.dart';
 import '../../services/sync_service.dart';
@@ -65,7 +66,17 @@ class _SplashScreenState extends State<SplashScreen> {
       // Go straight to home — don't block on any network calls.
       // Token validity is checked lazily (API calls return 401 → handled there).
       // All network work happens in the background after navigation.
-      await context.read<SignalingService>().connect();
+      final signaling = context.read<SignalingService>();
+      await signaling.connect();
+
+      // Start LAN mesh transport (fire-and-forget — doesn't block navigation).
+      // Registers the event callback first so no events are lost on discovery.
+      final myVirtualId = auth.virtualId ?? '';
+      if (myVirtualId.isNotEmpty) {
+        signaling.setLanTransport(LanTransport.instance);
+        LanTransport.instance.start(myVirtualId);
+      }
+
       Future(() async {
         await _ensureValidKeypair();
         await SyncService().syncTurnCredentials().catchError((_) {});

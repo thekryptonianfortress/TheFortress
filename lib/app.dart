@@ -12,7 +12,6 @@ import 'providers/messages_provider.dart';
 import 'services/groups_service.dart';
 import 'services/media_service.dart';
 import 'services/messaging_service.dart';
-import 'services/mdns_service.dart';
 import 'services/signaling_service.dart';
 import 'services/webrtc_service.dart';
 import 'ui/screens/auth/login_screen.dart';
@@ -56,7 +55,6 @@ class PagerApp extends StatelessWidget {
           create: (_) => GroupsProvider(GroupsService(), signaling),
         ),
         Provider<SignalingService>.value(value: signaling),
-        Provider<MdnsService>(create: (_) => MdnsService()),
       ],
       child: MaterialApp(
         navigatorKey: _navigatorKey,

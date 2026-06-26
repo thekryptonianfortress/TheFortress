@@ -5,6 +5,7 @@ import '../core/constants.dart';
 import '../data/local/database.dart';
 import '../data/local/secure_storage.dart';
 import '../data/models/message.dart';
+import 'lan_transport.dart';
 import 'signaling_service.dart';
 
 class MessagingService {
@@ -45,7 +46,46 @@ class MessagingService {
 
     await _db.upsertMessage(msg);
 
-    if (_signaling.isConnected) {
+    final serverConnected = _signaling.isConnected;
+    final lanReachable =
+        !serverConnected && LanTransport.instance.isReachable(recipientVirtualId);
+
+    if (lanReachable) {
+      // Deliver directly over LAN with full sender context so the recipient's
+      // MessagesProvider can construct the Message without a server lookup.
+      final myVirtualId = await SecureStorage.getVirtualId() ?? '';
+      final myUsername = await SecureStorage.getUsername() ?? '';
+      LanTransport.instance.send(recipientVirtualId, 'new-message', {
+        'message_id': msgId,
+        'sender_id': myId,
+        'sender_virtual_id': myVirtualId,
+        'sender_username': myUsername,
+        'encrypted_content': plaintext,
+        'nonce': '',
+        'created_at': DateTime.now().toIso8601String(),
+        if (replyToId != null) 'reply_to_id': replyToId,
+        if (attachmentUrl != null) 'attachment_url': attachmentUrl,
+        if (attachmentType != null) 'attachment_type': attachmentType,
+        if (attachmentName != null) 'attachment_name': attachmentName,
+        if (attachmentSize != null) 'attachment_size': attachmentSize,
+      });
+      // Also queue so the message is synced to the server when connectivity
+      // returns — ensures history and delivery receipts are preserved.
+      await _db.queueMessage({
+        'id': msgId,
+        'sender_id': myId,
+        'recipient_id': recipientId,
+        'encrypted_content': plaintext,
+        'nonce': '',
+        'recipient_virtual_id': recipientVirtualId,
+        'created_at': DateTime.now().toIso8601String(),
+        'reply_to_id': replyToId,
+        if (attachmentUrl != null) 'attachment_url': attachmentUrl,
+        if (attachmentType != null) 'attachment_type': attachmentType,
+        if (attachmentName != null) 'attachment_name': attachmentName,
+        if (attachmentSize != null) 'attachment_size': attachmentSize,
+      });
+    } else if (serverConnected) {
       _signaling.sendMessage(
         recipientVirtualId: recipientVirtualId,
         messageId: msgId,
