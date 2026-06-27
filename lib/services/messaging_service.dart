@@ -230,6 +230,43 @@ class MessagingService {
     }
   }
 
+  /// Flush pending messages for a specific LAN peer that just reconnected.
+  /// Sends directly via LAN; keeps them in the pending queue so they also
+  /// reach the server when internet is restored.
+  Future<void> flushPendingMessagesToLan(String peerVirtualId) async {
+    final pending = await _db.getPendingMessages();
+    final forPeer = pending
+        .where((p) => p['recipient_virtual_id'] == peerVirtualId)
+        .toList();
+    if (forPeer.isEmpty) return;
+
+    final myVirtualId = await SecureStorage.getVirtualId() ?? '';
+    final myUsername = await SecureStorage.getUsername() ?? '';
+    final myId = await SecureStorage.getUserId() ?? '';
+
+    for (final p in forPeer) {
+      final sent = LanTransport.instance.send(peerVirtualId, 'new-message', {
+        'message_id': p['id'] as String,
+        'sender_id': myId,
+        'sender_virtual_id': myVirtualId,
+        'sender_username': myUsername,
+        'encrypted_content': p['encrypted_content'] as String,
+        'nonce': (p['nonce'] as String?) ?? '',
+        'created_at': (p['created_at'] as String?) ??
+            DateTime.now().toUtc().toIso8601String(),
+        if (p['reply_to_id'] != null) 'reply_to_id': p['reply_to_id'],
+        if (p['attachment_url'] != null) 'attachment_url': p['attachment_url'],
+        if (p['attachment_type'] != null) 'attachment_type': p['attachment_type'],
+        if (p['attachment_name'] != null) 'attachment_name': p['attachment_name'],
+        if (p['attachment_size'] != null) 'attachment_size': p['attachment_size'],
+      });
+      if (sent) {
+        // Upgrade from clock → single tick; message stays queued for server sync.
+        await _db.updateMessageStatusIfPending(p['id'] as String, MessageStatus.sent);
+      }
+    }
+  }
+
   /// Return message content as-is (no encryption in current build).
   Future<String> decryptMessage({
     required String encryptedContent,

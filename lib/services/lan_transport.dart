@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:io';
 import 'package:bonsoir/bonsoir.dart';
+import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 import '../data/local/secure_storage.dart';
 
@@ -32,6 +33,12 @@ class LanTransport {
 
   static const int _port = 9876;
   static const String _serviceType = '_pager._tcp';
+  static const _fgChannel = MethodChannel('com.pager/foreground_service');
+
+  // Keepalive constants
+  static const Duration _pingInterval = Duration(seconds: 20);
+  static const Duration _pongTimeout = Duration(seconds: 50);
+  static const Duration _reconnectDelay = Duration(seconds: 5);
 
   final _uuid = const Uuid();
 
@@ -44,9 +51,19 @@ class LanTransport {
   HttpServer? _server;
   BonsoirBroadcast? _broadcast;
   BonsoirDiscovery? _discovery;
+  Timer? _heartbeatTimer;
 
   // virtualId → active WebSocket
   final Map<String, WebSocket> _peers = {};
+
+  // virtualId → last pong received time (for heartbeat timeout detection)
+  final Map<String, DateTime> _lastPong = {};
+
+  // virtualId → resolved service (for auto-reconnect)
+  final Map<String, ResolvedBonsoirService> _knownServices = {};
+
+  // virtualId → pending reconnect timer
+  final Map<String, Timer> _reconnectTimers = {};
 
   // callId → peer virtualId (for routing reply signals)
   final Map<String, String> _callPeerMap = {};
@@ -89,6 +106,37 @@ class LanTransport {
     await _startServer();
     await _startAdvertising();
     await _startDiscovery();
+    _startHeartbeat();
+    await _startForegroundService();
+  }
+
+  // ── Keepalive heartbeat ───────────────────────────────────────
+
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(_pingInterval, (_) {
+      final now = DateTime.now();
+      for (final entry in _peers.entries.toList()) {
+        final vid = entry.key;
+        final ws = entry.value;
+        if (ws.readyState != WebSocket.open) {
+          _dropPeer(vid);
+          continue;
+        }
+        final last = _lastPong[vid];
+        if (last != null && now.difference(last) > _pongTimeout) {
+          dev.log('[LAN] Peer $vid timed out — dropping');
+          ws.close().ignore();
+          _dropPeer(vid);
+          continue;
+        }
+        try {
+          ws.add(jsonEncode({'type': 'ping'}));
+        } catch (_) {
+          _dropPeer(vid);
+        }
+      }
+    });
   }
 
   // ── WebSocket server ──────────────────────────────────────────
@@ -119,8 +167,13 @@ class LanTransport {
             // Echo our identity back
             ws.add(jsonEncode({'type': 'hello', 'virtual_id': _myVirtualId}));
             _peers[peerVId!] = ws;
+            _lastPong[peerVId!] = DateTime.now();
             _notifyReachable();
             dev.log('[LAN] Peer connected (inbound): $peerVId');
+          } else if (type == 'ping' && peerVId != null) {
+            ws.add(jsonEncode({'type': 'pong'}));
+          } else if (type == 'pong' && peerVId != null) {
+            _lastPong[peerVId!] = DateTime.now();
           } else if (type == 'event' && peerVId != null) {
             _onLanEvent(
               fromVId: peerVId!,
@@ -189,6 +242,9 @@ class LanTransport {
     if (peerVId == _myVirtualId) return; // skip self
     if (isReachable(peerVId)) return; // already connected
 
+    // Cache address for auto-reconnect
+    _knownServices[peerVId] = svc;
+
     final host = svc.host;
     if (host == null) return;
     dev.log('[LAN] Connecting to $peerVId @ $host:${svc.port}');
@@ -200,6 +256,7 @@ class LanTransport {
       // Identify ourselves
       ws.add(jsonEncode({'type': 'hello', 'virtual_id': _myVirtualId}));
       _peers[peerVId] = ws;
+      _lastPong[peerVId] = DateTime.now();
       _notifyReachable();
       dev.log('[LAN] Connected (outbound) to $peerVId');
 
@@ -208,7 +265,12 @@ class LanTransport {
           if (raw is! String) return;
           try {
             final msg = jsonDecode(raw) as Map<String, dynamic>;
-            if (msg['type'] == 'event') {
+            final type = msg['type'] as String? ?? '';
+            if (type == 'ping') {
+              ws.add(jsonEncode({'type': 'pong'}));
+            } else if (type == 'pong') {
+              _lastPong[peerVId] = DateTime.now();
+            } else if (type == 'event') {
               _onLanEvent(
                 fromVId: peerVId,
                 event: msg['event'] as String,
@@ -226,6 +288,22 @@ class LanTransport {
     } catch (e) {
       dev.log('[LAN] Connect to $peerVId failed: $e');
     }
+  }
+
+  // ── Auto-reconnect ────────────────────────────────────────────
+
+  void _scheduleReconnect(String virtualId) {
+    if (_myVirtualId == null) return; // stopped
+    if (_reconnectTimers.containsKey(virtualId)) return; // already scheduled
+    final svc = _knownServices[virtualId];
+    if (svc == null) return; // no known address
+    dev.log('[LAN] Scheduling reconnect to $virtualId in ${_reconnectDelay.inSeconds}s');
+    _reconnectTimers[virtualId] = Timer(_reconnectDelay, () {
+      _reconnectTimers.remove(virtualId);
+      if (_myVirtualId == null) return;
+      if (isReachable(virtualId)) return; // reconnected via mDNS already
+      _connectToPeer(svc);
+    });
   }
 
   // ── Incoming event handling ───────────────────────────────────
@@ -302,13 +380,40 @@ class LanTransport {
   void _dropPeer(String? virtualId) {
     if (virtualId == null) return;
     _peers.remove(virtualId);
+    _lastPong.remove(virtualId);
     _notifyReachable();
     dev.log('[LAN] Peer dropped: $virtualId');
+    _scheduleReconnect(virtualId);
+  }
+
+  // ── Foreground service ────────────────────────────────────────
+
+  Future<void> _startForegroundService() async {
+    try {
+      await _fgChannel.invokeMethod<void>('start');
+    } catch (e) {
+      dev.log('[LAN] Foreground service start failed: $e');
+    }
+  }
+
+  Future<void> _stopForegroundService() async {
+    try {
+      await _fgChannel.invokeMethod<void>('stop');
+    } catch (e) {
+      dev.log('[LAN] Foreground service stop failed: $e');
+    }
   }
 
   Future<void> stop() async {
     _myVirtualId = null;
+    _myUserId = '';
     _inject = null;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    for (final t in _reconnectTimers.values) {
+      t.cancel();
+    }
+    _reconnectTimers.clear();
     try { await _broadcast?.stop(); } catch (_) {}
     try { await _discovery?.stop(); } catch (_) {}
     try { await _server?.close(force: true); } catch (_) {}
@@ -316,10 +421,13 @@ class LanTransport {
       try { await ws.close(); } catch (_) {}
     }
     _peers.clear();
+    _lastPong.clear();
+    _knownServices.clear();
     _callPeerMap.clear();
     _userToVId.clear();
     _broadcast = null;
     _discovery = null;
     _server = null;
+    await _stopForegroundService();
   }
 }

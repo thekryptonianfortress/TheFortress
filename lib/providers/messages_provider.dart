@@ -21,6 +21,8 @@ class MessagesProvider extends ChangeNotifier {
   final Map<String, int> _unreadCounts = {};
   final Set<String> _loadedPeerIds = {}; // peers explicitly opened this session
   StreamSubscription<SignalingMessage>? _sub;
+  StreamSubscription<Set<String>>? _lanReachableSub;
+  Set<String> _lastReachablePeers = {};
 
   String? _typingPeerId;
   Timer? _typingTimer;
@@ -28,6 +30,7 @@ class MessagesProvider extends ChangeNotifier {
 
   MessagesProvider(this._messaging, this._signaling) {
     _listenToSignaling();
+    _listenToLanReachable();
     NotificationService.onMessageReply = _handleNotificationReply;
     _processPendingReplies();
     _initUnreadCounts();
@@ -99,6 +102,16 @@ class MessagesProvider extends ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  void _listenToLanReachable() {
+    _lanReachableSub = LanTransport.instance.reachableStream.listen((reachable) {
+      final newPeers = reachable.difference(_lastReachablePeers);
+      _lastReachablePeers = Set.unmodifiable(reachable);
+      for (final vid in newPeers) {
+        _messaging.flushPendingMessagesToLan(vid);
+      }
+    });
   }
 
   void _listenToSignaling() {
@@ -521,6 +534,7 @@ class MessagesProvider extends ChangeNotifier {
   @override
   void dispose() {
     _sub?.cancel();
+    _lanReachableSub?.cancel();
     _typingTimer?.cancel();
     super.dispose();
   }

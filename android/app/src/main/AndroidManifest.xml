@@ -19,6 +19,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <!-- Camera / Media -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -69,6 +70,12 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <!-- LAN foreground service — keeps WS connections alive when app is backgrounded -->
+        <service
+            android:name=".LanForegroundService"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
 
         <!-- Native inline-reply handler for message notifications -->
         <receiver

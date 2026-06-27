@@ -98,6 +98,32 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // Foreground service channel — keeps LAN transport alive in background
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.pager/foreground_service")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        val intent = Intent(this, LanForegroundService::class.java).apply {
+                            action = LanForegroundService.ACTION_START
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                        result.success(null)
+                    }
+                    "stop" -> {
+                        val intent = Intent(this, LanForegroundService::class.java).apply {
+                            action = LanForegroundService.ACTION_STOP
+                        }
+                        startService(intent)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
         // Notification channel — shows message notifications with native inline reply
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, notifChannel)
             .setMethodCallHandler { call, result ->
