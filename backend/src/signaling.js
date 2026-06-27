@@ -191,19 +191,21 @@ function setupSignaling(io) {
 
     socket.on('send-message', async (data) => {
       const { recipient_virtual_id, message_id, encrypted_content, nonce, reply_to_id,
-              attachment_url, attachment_type, attachment_name, attachment_size } = data;
+              attachment_url, attachment_type, attachment_name, attachment_size, created_at } = data;
       const recipient = await getUserByVirtualId(recipient_virtual_id);
       if (!recipient) return;
 
       console.log(`[send-message] from=${userId} to=${recipient.id} msgId=${message_id}`);
 
+      // Use client-provided created_at when present (preserves original LAN-period send time).
       await db.query(
         `INSERT INTO messages (id, sender_id, recipient_id, encrypted_content, nonce, status, reply_to_id,
-                               attachment_url, attachment_type, attachment_name, attachment_size)
-         VALUES ($1, $2, $3, $4, $5, 'sent', $6, $7, $8, $9, $10)
+                               attachment_url, attachment_type, attachment_name, attachment_size, created_at)
+         VALUES ($1, $2, $3, $4, $5, 'sent', $6, $7, $8, $9, $10, COALESCE($11::timestamptz, NOW()))
          ON CONFLICT DO NOTHING`,
         [message_id, userId, recipient.id, encrypted_content, nonce, reply_to_id || null,
-         attachment_url || null, attachment_type || null, attachment_name || null, attachment_size || null]
+         attachment_url || null, attachment_type || null, attachment_name || null, attachment_size || null,
+         created_at || null]
       );
 
       const sender = await db.query(

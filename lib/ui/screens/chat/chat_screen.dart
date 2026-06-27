@@ -14,6 +14,7 @@ import '../../../data/models/message.dart';
 import '../../../providers/contacts_provider.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/messages_provider.dart';
+import '../../../services/lan_transport.dart';
 import '../../../services/media_service.dart';
 import '../../../services/messaging_service.dart';
 import '../../../services/signaling_service.dart';
@@ -845,25 +846,52 @@ class _ChatScreenState extends State<ChatScreen> {
                       color: AppTheme.onSurface),
                   overflow: TextOverflow.ellipsis,
                 ),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: isTyping
-                      ? const Text(
-                          'typing...',
-                          key: ValueKey('typing'),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppTheme.accent,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        )
-                      : Text(
-                          _lastSeenLabel(contact),
-                          key: const ValueKey('status'),
-                          style: const TextStyle(
-                              fontSize: 12, color: AppTheme.muted),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                StreamBuilder<Set<String>>(
+                  stream: LanTransport.instance.reachableStream,
+                  initialData: LanTransport.instance.reachablePeers,
+                  builder: (context, snap) {
+                    final serverConnected = context.read<SignalingService>().isConnected;
+                    final lanReachable = !serverConnected &&
+                        (snap.data?.contains(widget.contact.virtualId) ?? false);
+                    return AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      child: isTyping
+                          ? const Text(
+                              'typing...',
+                              key: ValueKey('typing'),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.accent,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            )
+                          : lanReachable
+                              ? const Row(
+                                  key: ValueKey('lan'),
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.wifi_rounded,
+                                        size: 12, color: AppTheme.accent),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'LAN',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: AppTheme.accent,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Text(
+                                  _lastSeenLabel(contact),
+                                  key: const ValueKey('status'),
+                                  style: const TextStyle(
+                                      fontSize: 12, color: AppTheme.muted),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                    );
+                  },
                 ),
               ],
             ),

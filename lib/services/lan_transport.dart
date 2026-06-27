@@ -54,6 +54,11 @@ class LanTransport {
   // peer userId → peer virtualId (for routing read receipts)
   final Map<String, String> _userToVId = {};
 
+  final _reachableController = StreamController<Set<String>>.broadcast();
+
+  /// Emits the updated set of reachable virtualIds on every peer connect/disconnect.
+  Stream<Set<String>> get reachableStream => _reachableController.stream;
+
   Set<String> get reachablePeers => Set.unmodifiable(_peers.keys);
   String get myUserId => _myUserId;
   String? getVirtualIdForUser(String userId) => _userToVId[userId];
@@ -114,6 +119,7 @@ class LanTransport {
             // Echo our identity back
             ws.add(jsonEncode({'type': 'hello', 'virtual_id': _myVirtualId}));
             _peers[peerVId!] = ws;
+            _notifyReachable();
             dev.log('[LAN] Peer connected (inbound): $peerVId');
           } else if (type == 'event' && peerVId != null) {
             _onLanEvent(
@@ -194,6 +200,7 @@ class LanTransport {
       // Identify ourselves
       ws.add(jsonEncode({'type': 'hello', 'virtual_id': _myVirtualId}));
       _peers[peerVId] = ws;
+      _notifyReachable();
       dev.log('[LAN] Connected (outbound) to $peerVId');
 
       ws.listen(
@@ -244,11 +251,13 @@ class LanTransport {
         _userToVId[senderId] = senderVId;
       }
 
-      // Acknowledge delivery so the sender's tick updates
+      // Acknowledge delivery so the sender's tick updates.
+      // recipient_id must be OUR userId (the message recipient) so the sender's
+      // MessagesProvider can find the message in _chats[recipientId].
       if (msgId != null && senderId != null) {
         send(fromVId, 'message-ack', {
           'message_id': msgId,
-          'recipient_id': senderId,
+          'recipient_id': _myUserId,
           'status': 'delivered',
         });
       }
@@ -284,9 +293,16 @@ class LanTransport {
 
   void clearCall(String callId) => _callPeerMap.remove(callId);
 
+  void _notifyReachable() {
+    if (!_reachableController.isClosed) {
+      _reachableController.add(Set.unmodifiable(_peers.keys));
+    }
+  }
+
   void _dropPeer(String? virtualId) {
     if (virtualId == null) return;
     _peers.remove(virtualId);
+    _notifyReachable();
     dev.log('[LAN] Peer dropped: $virtualId');
   }
 

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/local/database.dart';
 import '../data/local/secure_storage.dart';
 import '../data/models/message.dart';
+import '../services/lan_transport.dart';
 import '../services/messaging_service.dart';
 import '../services/notification_service.dart';
 import '../services/signaling_service.dart';
@@ -109,7 +110,7 @@ class MessagesProvider extends ChangeNotifier {
         case SignalingEvent.messageDelivered:
           final msgId = msg.data['message_id'] as String;
           final recipId = msg.data['recipient_id'] as String;
-          await _db.updateMessageStatus(msgId, MessageStatus.delivered);
+          await _db.updateMessageStatusMax(msgId, MessageStatus.delivered);
           _updateStatusInCache(recipId, msgId, MessageStatus.delivered);
 
         case SignalingEvent.messageAck:
@@ -118,11 +119,12 @@ class MessagesProvider extends ChangeNotifier {
           final status = (msg.data['status'] as String?) == 'delivered'
               ? MessageStatus.delivered
               : MessageStatus.sent;
-          await _db.updateMessageStatus(msgId, status);
+          await _db.updateMessageStatusMax(msgId, status);
           _updateStatusInCache(recipId, msgId, status);
 
         case SignalingEvent.connected:
           await _messaging.flushPendingMessages();
+          await _messaging.flushPendingLanOps();
           await _processPendingReplies();
           // Re-seed all contact tile previews from local DB so the list is
           // immediately current (socket delivers any missing messages on top).
@@ -199,7 +201,9 @@ class MessagesProvider extends ChangeNotifier {
 
     // No encryption — content is plaintext
     final decrypted = msg.copyWith(decryptedContent: msg.encryptedContent);
-    await _db.upsertMessage(msg);
+    // Use merge strategy so server re-delivery never overwrites LAN-period edits,
+    // deletes, or reactions already stored in the local DB.
+    await _db.upsertMessageFromServer(msg);
 
     final existing = _chats[senderId] ?? [];
     if (!existing.any((m) => m.id == msg.id)) {
@@ -243,10 +247,19 @@ class MessagesProvider extends ChangeNotifier {
     _loadedPeerIds.add(peerId);
     final myId = await SecureStorage.getUserId() ?? '';
 
+    // Capture current in-memory decryptedContent BEFORE any cache replacement
+    // so we can restore it after reloading from DB (which never stores decryptedContent).
+    final priorCache = {for (final m in (_chats[peerId] ?? [])) m.id: m};
+
     // Show DB messages immediately — user sees full history with zero delay
     final dbMsgs = await _db.getMessages(myId, peerId);
     if (dbMsgs.isNotEmpty) {
-      _chats[peerId] = dbMsgs;
+      _chats[peerId] = dbMsgs.map((m) {
+        final prior = priorCache[m.id];
+        return prior?.decryptedContent != null
+            ? m.copyWith(decryptedContent: prior!.decryptedContent)
+            : m;
+      }).toList();
       notifyListeners();
     }
 
@@ -302,10 +315,13 @@ class MessagesProvider extends ChangeNotifier {
       attachmentSize: attachmentSize,
     );
 
-    final shown =
-        msg.copyWith(decryptedContent: plaintext, status: MessageStatus.pending);
-    _chats[recipientId] = [...(_chats[recipientId] ?? []), shown];
-    notifyListeners();
+    final existing = _chats[recipientId] ?? [];
+    if (!existing.any((m) => m.id == msg.id)) {
+      final shown =
+          msg.copyWith(decryptedContent: plaintext, status: MessageStatus.pending);
+      _chats[recipientId] = [...existing, shown];
+      notifyListeners();
+    }
   }
 
   Future<void> editMessage({
@@ -350,6 +366,14 @@ class MessagesProvider extends ChangeNotifier {
     _unreadCounts[peerId] = 0;
     _signaling.sendReadReceipt(messageIds: ids, senderId: peerId);
 
+    // Queue for server sync when we reconnect (LAN-only session)
+    if (!_signaling.isConnected) {
+      final prefs = await SharedPreferences.getInstance();
+      final pending = prefs.getStringList('pending_lan_read_receipts') ?? [];
+      pending.add(jsonEncode({'message_ids': ids, 'sender_id': peerId}));
+      await prefs.setStringList('pending_lan_read_receipts', pending);
+    }
+
     for (final id in ids) {
       await _db.updateMessageStatus(id, MessageStatus.read);
     }
@@ -367,8 +391,12 @@ class MessagesProvider extends ChangeNotifier {
     if (chat == null) return;
     final idx = chat.indexWhere((m) => m.id == msgId);
     if (idx != -1) {
-      _chats[peerId]![idx] = chat[idx].copyWith(status: status);
-      notifyListeners();
+      // Never downgrade (e.g., read → delivered) — take the higher status.
+      final newStatus = _maxStatus(chat[idx].status, status);
+      if (newStatus != chat[idx].status) {
+        _chats[peerId]![idx] = chat[idx].copyWith(status: newStatus);
+        notifyListeners();
+      }
     }
   }
 
@@ -406,13 +434,35 @@ class MessagesProvider extends ChangeNotifier {
     required String messageId,
     required String emoji,
     required String recipientVirtualId,
-  }) {
+  }) async {
+    if (!_signaling.isConnected &&
+        LanTransport.instance.isReachable(recipientVirtualId)) {
+      // Compute updated reactions locally — server isn't available to do it.
+      final myId = await SecureStorage.getUserId() ?? '';
+      final chat = _chats[peerId] ?? [];
+      final msg = chat.where((m) => m.id == messageId).firstOrNull;
+      final updated = Map<String, List<String>>.from(
+        msg?.reactions.map((k, v) => MapEntry(k, List<String>.from(v))) ?? {},
+      );
+      final users = List<String>.from(updated[emoji] ?? []);
+      if (!users.contains(myId)) users.add(myId);
+      updated[emoji] = users;
+
+      await _db.updateMessageReactions(messageId, updated);
+      _updateReactionsInCache(messageId, updated);
+      notifyListeners();
+
+      LanTransport.instance.send(recipientVirtualId, 'reaction-added', {
+        'message_id': messageId,
+        'reactions': updated,
+      });
+      return;
+    }
     _signaling.emitReaction(
       messageId: messageId,
       emoji: emoji,
       recipientVirtualId: recipientVirtualId,
     );
-    return Future.value();
   }
 
   void _updateReactionsInCache(

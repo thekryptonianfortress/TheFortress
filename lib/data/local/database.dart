@@ -273,6 +273,87 @@ class LocalDatabase {
         where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Like [updateMessageStatus] but never downgrades — only applies when the
+  /// new status is higher than the current one (pending < sent < delivered < read).
+  Future<void> updateMessageStatusMax(String id, MessageStatus status) async {
+    final d = await db;
+    const order = "CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE 0 END";
+    await d.rawUpdate(
+      'UPDATE messages SET status = ? WHERE id = ? AND ($order) < ?',
+      [status.name, id, MessageStatus.values.indexOf(status)],
+    );
+  }
+
+  /// Like [updateMessageStatus] but only applies if the current status is
+  /// [MessageStatus.pending] — prevents downgrading delivered/read back to sent
+  /// when flushing the offline queue after a LAN delivery already acked it.
+  Future<void> updateMessageStatusIfPending(
+      String id, MessageStatus newStatus) async {
+    final d = await db;
+    await d.update(
+      'messages',
+      {'status': newStatus.name},
+      where: 'id = ? AND status = ?',
+      whereArgs: [id, MessageStatus.pending.name],
+    );
+  }
+
+  /// Upsert a message received from the server while preserving any
+  /// local-only changes made while offline (edits, deletes, reactions).
+  /// Always keeps the local createdAt to preserve original send-time ordering.
+  Future<void> upsertMessageFromServer(Message serverMsg) async {
+    final d = await db;
+    final rows =
+        await d.query('messages', where: 'id = ?', whereArgs: [serverMsg.id]);
+
+    if (rows.isEmpty) {
+      // New message not seen before — insert as-is
+      await d.insert('messages', serverMsg.toDbMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      return;
+    }
+
+    final local = Message.fromDbMap(rows.first);
+
+    // Keep local deletion if the server doesn't know about it yet
+    final keepDeleted = local.isDeleted && !serverMsg.isDeleted;
+    // Keep local edit if server has no edited_at (server never received the edit)
+    final keepEdit = local.editedAt != null && serverMsg.editedAt == null;
+    // Keep local reactions if server has none (reactions added offline)
+    final keepReactions =
+        local.reactions.isNotEmpty && serverMsg.reactions.isEmpty;
+
+    // Always reconstruct to guarantee local.createdAt is preserved (fixes
+    // post-reconnect message ordering when the server assigned a later NOW()).
+    final merged = Message(
+      id: serverMsg.id,
+      senderId: serverMsg.senderId,
+      recipientId: serverMsg.recipientId,
+      encryptedContent:
+          keepEdit ? local.encryptedContent : serverMsg.encryptedContent,
+      nonce: serverMsg.nonce,
+      status: _maxStatus(local.status, serverMsg.status),
+      createdAt: local.createdAt, // always keep local timestamp
+      editedAt: keepEdit ? local.editedAt : serverMsg.editedAt,
+      isOutgoing: local.isOutgoing,
+      isDeleted: keepDeleted ? true : serverMsg.isDeleted,
+      replyToId: serverMsg.replyToId ?? local.replyToId,
+      reactions: keepReactions ? local.reactions : serverMsg.reactions,
+      attachmentUrl: serverMsg.attachmentUrl ?? local.attachmentUrl,
+      attachmentType: serverMsg.attachmentType ?? local.attachmentType,
+      attachmentName: serverMsg.attachmentName ?? local.attachmentName,
+      attachmentSize: serverMsg.attachmentSize ?? local.attachmentSize,
+    );
+    await d.insert('messages', merged.toDbMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  static MessageStatus _maxStatus(MessageStatus a, MessageStatus b) {
+    return MessageStatus.values.indexOf(a) >= MessageStatus.values.indexOf(b)
+        ? a
+        : b;
+  }
+
   Future<void> updateMessageContent(
       String id, String newContent, DateTime editedAt) async {
     final d = await db;

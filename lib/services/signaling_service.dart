@@ -282,6 +282,7 @@ class SignalingService {
     String? attachmentType,
     String? attachmentName,
     int? attachmentSize,
+    String? createdAt,
   }) {
     _socket?.emit('send-message', {
       'recipient_virtual_id': recipientVirtualId,
@@ -293,6 +294,7 @@ class SignalingService {
       if (attachmentType != null) 'attachment_type': attachmentType,
       if (attachmentName != null) 'attachment_name': attachmentName,
       if (attachmentSize != null) 'attachment_size': attachmentSize,
+      if (createdAt != null) 'created_at': createdAt,
     });
   }
 
@@ -308,7 +310,7 @@ class SignalingService {
 
   void sendReadReceipt(
       {required List<String> messageIds, required String senderId}) {
-    if (_lan != null) {
+    if (!_isConnected && _lan != null) {
       // senderId = the peer's userId (original message sender we're acking)
       final peerVId = _lan!.getVirtualIdForUser(senderId);
       if (peerVId != null && _lan!.isReachable(peerVId)) {
@@ -330,11 +332,13 @@ class SignalingService {
     required String newContent,
     required String recipientVirtualId,
   }) {
-    if (_lan != null && _lan!.isReachable(recipientVirtualId)) {
+    // Only prefer LAN when server is unreachable — if connected, always use server
+    // so the edit persists server-side (critical for flush-on-reconnect correctness).
+    if (!_isConnected && _lan != null && _lan!.isReachable(recipientVirtualId)) {
       _lan!.send(recipientVirtualId, 'message-edited', {
         'message_id': messageId,
         'new_content': newContent,
-        'edited_at': DateTime.now().toIso8601String(),
+        'edited_at': DateTime.now().toUtc().toIso8601String(),
       });
       return;
     }
@@ -349,7 +353,8 @@ class SignalingService {
     required String messageId,
     required String recipientVirtualId,
   }) {
-    if (_lan != null && _lan!.isReachable(recipientVirtualId)) {
+    // Only prefer LAN when server is unreachable.
+    if (!_isConnected && _lan != null && _lan!.isReachable(recipientVirtualId)) {
       _lan!.send(recipientVirtualId, 'message-deleted', {
         'message_id': messageId,
       });
