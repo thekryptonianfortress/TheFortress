@@ -14,9 +14,11 @@ class ActiveCallScreen extends StatefulWidget {
   State<ActiveCallScreen> createState() => _ActiveCallScreenState();
 }
 
-class _ActiveCallScreenState extends State<ActiveCallScreen> {
+class _ActiveCallScreenState extends State<ActiveCallScreen>
+    with SingleTickerProviderStateMixin {
   Timer? _timer;
   int _seconds = 0;
+  late final AnimationController _reconnectCtrl;
 
   @override
   void initState() {
@@ -24,11 +26,17 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _seconds++);
     });
+    // Spinner shown when reconnecting
+    _reconnectCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _reconnectCtrl.dispose();
     super.dispose();
   }
 
@@ -42,7 +50,6 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   Widget build(BuildContext context) {
     return Consumer<CallProvider>(
       builder: (context, call, _) {
-        // Pop when call ends
         if (call.callState == CallState.idle || call.callState == CallState.ended) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
@@ -50,68 +57,133 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
         }
 
         final peerName = call.activePeerUsername ?? 'Unknown';
-        final peerAvatar = context.read<ContactsProvider>()
-            .getByVirtualId(call.activePeerVirtualId ?? '')?.avatarUrl;
+        final peerAvatar = context
+            .read<ContactsProvider>()
+            .getByVirtualId(call.activePeerVirtualId ?? '')
+            ?.avatarUrl;
+        final quality = call.callQuality;
+        final isReconnecting = quality == CallQuality.reconnecting ||
+            quality == CallQuality.poor;
 
         return Scaffold(
-          backgroundColor: AppTheme.surface,
-          body: SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const SizedBox(height: 48),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    UserAvatar(
-                      username: peerName,
-                      avatarUrl: peerAvatar,
-                      radius: 56,
-                      backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
-                      fontSize: 48,
+          body: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF0A0F1A),
+                  Color(0xFF0D1822),
+                  Color(0xFF0F2032),
+                ],
+              ),
+            ),
+            child: SafeArea(
+              child: Column(
+                children: [
+                  // ── Top bar: timer + quality ──────────────────────
+                  Padding(
+                    padding: const EdgeInsets.only(top: 32, bottom: 16),
+                    child: Column(
+                      children: [
+                        // Timer
+                        Text(
+                          _duration,
+                          style: const TextStyle(
+                            color: AppTheme.accent,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 2,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        // Quality badge
+                        _QualityBadge(
+                          quality: quality,
+                          reconnectCtrl: _reconnectCtrl,
+                          isReconnecting: isReconnecting,
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 20),
-                    Text(peerName,
-                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    Text(call.activePeerVirtualId ?? '',
-                        style: const TextStyle(color: AppTheme.muted, fontSize: 13)),
-                    const SizedBox(height: 12),
-                    Text(_duration, style: const TextStyle(color: AppTheme.accent, fontSize: 18)),
-                  ],
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 56),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _CallButton(
-                        icon: call.isMuted ? Icons.mic_off : Icons.mic,
-                        label: call.isMuted ? 'Unmute' : 'Mute',
-                        color: call.isMuted ? AppTheme.primary : AppTheme.surfaceVariant,
-                        onTap: call.toggleMute,
-                      ),
-                      _CallButton(
-                        icon: Icons.call_end,
-                        label: 'End',
-                        color: AppTheme.danger,
-                        onTap: () {
-                          call.endCall();
-                          Navigator.of(context).popUntil((r) => r.isFirst);
-                        },
-                        size: 72,
-                      ),
-                      _CallButton(
-                        icon: call.isSpeakerOn ? Icons.volume_up : Icons.volume_down,
-                        label: call.isSpeakerOn ? 'Speaker' : 'Earpiece',
-                        color: call.isSpeakerOn ? AppTheme.primary : AppTheme.surfaceVariant,
-                        onTap: call.toggleSpeaker,
-                      ),
-                    ],
                   ),
-                ),
-              ],
+
+                  const Spacer(),
+
+                  // ── Avatar ────────────────────────────────────────
+                  UserAvatar(
+                    username: peerName,
+                    avatarUrl: peerAvatar,
+                    radius: 72,
+                    fontSize: 52,
+                  ),
+                  const SizedBox(height: 24),
+
+                  // ── Peer name ─────────────────────────────────────
+                  Text(
+                    peerName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    isReconnecting ? 'Reconnecting...' : 'Connected',
+                    style: TextStyle(
+                      color: isReconnecting
+                          ? Colors.amber.shade400
+                          : AppTheme.accent,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+
+                  const Spacer(),
+
+                  // ── Controls ──────────────────────────────────────
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 56, left: 16, right: 16),
+                    child: Column(
+                      children: [
+                        // Main row: Mute | End | Speaker
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            _ControlButton(
+                              icon: call.isMuted
+                                  ? Icons.mic_off_rounded
+                                  : Icons.mic_rounded,
+                              label: call.isMuted ? 'Unmute' : 'Mute',
+                              active: call.isMuted,
+                              activeColor: AppTheme.primary,
+                              onTap: call.toggleMute,
+                            ),
+                            // End call (larger)
+                            _EndButton(
+                              onTap: () {
+                                call.endCall();
+                                Navigator.of(context).popUntil((r) => r.isFirst);
+                              },
+                            ),
+                            _ControlButton(
+                              icon: call.isSpeakerOn
+                                  ? Icons.volume_up_rounded
+                                  : Icons.volume_down_rounded,
+                              label: call.isSpeakerOn ? 'Speaker' : 'Earpiece',
+                              active: call.isSpeakerOn,
+                              activeColor: AppTheme.primary,
+                              onTap: call.toggleSpeaker,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -120,38 +192,192 @@ class _ActiveCallScreenState extends State<ActiveCallScreen> {
   }
 }
 
-class _CallButton extends StatelessWidget {
+// ── Quality badge ─────────────────────────────────────────────────────────────
+
+class _QualityBadge extends StatelessWidget {
+  final CallQuality quality;
+  final AnimationController reconnectCtrl;
+  final bool isReconnecting;
+
+  const _QualityBadge({
+    required this.quality,
+    required this.reconnectCtrl,
+    required this.isReconnecting,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isReconnecting) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: AnimatedBuilder(
+              animation: reconnectCtrl,
+              builder: (context, child) => Transform.rotate(
+                angle: reconnectCtrl.value * 2 * 3.14159,
+                child: child,
+              ),
+              child: const Icon(Icons.sync_rounded,
+                  color: Colors.amber, size: 14),
+            ),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            quality == CallQuality.poor ? 'Poor connection' : 'Reconnecting',
+            style: TextStyle(
+              color: Colors.amber.shade400,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Show signal bars for good/connecting
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _SignalBars(quality: quality),
+        const SizedBox(width: 6),
+        Text(
+          quality == CallQuality.good ? 'Good' : 'Connecting',
+          style: TextStyle(
+            color: quality == CallQuality.good
+                ? AppTheme.accent
+                : AppTheme.muted,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SignalBars extends StatelessWidget {
+  final CallQuality quality;
+  const _SignalBars({required this.quality});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = quality == CallQuality.good ? AppTheme.accent : AppTheme.muted;
+    final filled = quality == CallQuality.good ? 3 : 1;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: List.generate(3, (i) {
+        return Container(
+          width: 3,
+          height: 5.0 + i * 3.0,
+          margin: const EdgeInsets.only(right: 2),
+          decoration: BoxDecoration(
+            color: i < filled
+                ? color
+                : color.withValues(alpha: 0.25),
+            borderRadius: BorderRadius.circular(1),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+// ── Control button ────────────────────────────────────────────────────────────
+
+class _ControlButton extends StatelessWidget {
   final IconData icon;
   final String label;
-  final Color color;
+  final bool active;
+  final Color activeColor;
   final VoidCallback onTap;
-  final double size;
 
-  const _CallButton({
+  const _ControlButton({
     required this.icon,
     required this.label,
-    required this.color,
+    required this.active,
+    required this.activeColor,
     required this.onTap,
-    this.size = 60,
   });
+
+  @override
+  Widget build(BuildContext context) {
+    final bgColor = active
+        ? activeColor
+        : Colors.white.withValues(alpha: 0.1);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 62,
+            height: 62,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: bgColor,
+            ),
+            child: Icon(icon, color: Colors.white, size: 26),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppTheme.muted,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── End call button ───────────────────────────────────────────────────────────
+
+class _EndButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _EndButton({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         GestureDetector(
           onTap: onTap,
           child: Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-            child: Icon(icon, color: Colors.white, size: size * 0.45),
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppTheme.danger,
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.danger.withValues(alpha: 0.4),
+                  blurRadius: 20,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: const Icon(Icons.call_end_rounded,
+                color: Colors.white, size: 32),
           ),
         ),
-        const SizedBox(height: 8),
-        Text(label, style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+        const SizedBox(height: 10),
+        const Text(
+          'End',
+          style: TextStyle(
+            color: AppTheme.muted,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ],
     );
   }

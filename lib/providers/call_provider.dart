@@ -39,6 +39,7 @@ class CallProvider extends ChangeNotifier {
 
   IncomingCallInfo? get incomingCall => _incomingCall;
   CallState get callState => _webrtc.state;
+  CallQuality get callQuality => _webrtc.quality;
   bool get isMuted => _isMuted;
   bool get isSpeakerOn => _isSpeakerOn;
   String? get activePeerUsername => _activePeerUsername;
@@ -61,6 +62,8 @@ class CallProvider extends ChangeNotifier {
       _webrtc.endCall();
       _clearState();
     };
+    // Bubble quality changes to the UI
+    _webrtc.onQualityChanged = (_) => notifyListeners();
   }
 
   void _listenSignaling() {
@@ -68,15 +71,11 @@ class CallProvider extends ChangeNotifier {
       try {
         switch (msg.event) {
           case SignalingEvent.callOfferAck:
-            // Server assigned a call_id to our outgoing offer — store it immediately
-            // so ICE candidates can be sent and endCall() can signal the server
             final callId = msg.data['call_id'] as String;
             dev.log('[CallProvider] call-offer-ack callId=$callId');
             _webrtc.confirmCallId(callId);
-            break;
           case SignalingEvent.incomingCall:
             _handleIncomingCall(msg.data);
-            break;
           case SignalingEvent.callAnswered:
             dev.log('[CallProvider] call-answered');
             _cancelCallTimeout();
@@ -84,28 +83,24 @@ class CallProvider extends ChangeNotifier {
               Map<String, dynamic>.from(msg.data['sdp'] as Map),
               callId: msg.data['call_id'] as String,
             );
-            break;
           case SignalingEvent.callRejected:
             _cancelCallTimeout();
             NotificationService.stopRingtone();
             NotificationService.cancelAll();
+            await _saveCallRecord(CallStatus.rejected);
             _clearCall();
-            break;
           case SignalingEvent.callEnded:
             _cancelCallTimeout();
             NotificationService.stopRingtone();
             NotificationService.cancelAll();
-            // Clear incoming call in case it was still ringing (caller cancelled)
             _incomingCall = null;
             await _saveCallRecord(CallStatus.completed);
             _webrtc.endCall();
             _clearState();
-            break;
           case SignalingEvent.iceCandidate:
             await _webrtc.addIceCandidate(
               Map<String, dynamic>.from(msg.data['candidate'] as Map),
             );
-            break;
           default:
             break;
         }
@@ -147,14 +142,16 @@ class CallProvider extends ChangeNotifier {
       callerUsername: myUsername,
       callerVirtualId: myVirtualId,
     );
-    _isSpeakerOn = true;
-    Helper.setSpeakerphoneOn(true);
+    // Default to earpiece (speaker off) — user can toggle if desired
+    _isSpeakerOn = false;
+    Helper.setSpeakerphoneOn(false);
 
-    // Auto-cancel after 60 seconds if not answered
+    // Auto-cancel after 60 seconds if not answered — save as missed
     _cancelCallTimeout();
     _callTimeoutTimer = Timer(const Duration(seconds: 60), () {
       if (_webrtc.state == CallState.calling) {
-        dev.log('[CallProvider] call timeout — auto-cancelling');
+        dev.log('[CallProvider] call timeout — saving as missed');
+        _saveCallRecord(CallStatus.missed);
         endCall();
       }
     });
@@ -178,8 +175,9 @@ class CallProvider extends ChangeNotifier {
     );
     _signaling.sendCallAnswer(callId: info.callId, sdp: answerSdp);
     _incomingCall = null;
-    _isSpeakerOn = true;
-    Helper.setSpeakerphoneOn(true);
+    // Default to earpiece — user can switch to speaker
+    _isSpeakerOn = false;
+    Helper.setSpeakerphoneOn(false);
     notifyListeners();
   }
 
@@ -234,7 +232,6 @@ class CallProvider extends ChangeNotifier {
   }
 
   Future<void> _saveCallRecord(CallStatus status) async {
-    // Capture before any await — _clearState() may run concurrently
     final peerVirtualId = _activePeerVirtualId;
     final peerUsername = _activePeerUsername;
     final callId = _webrtc.activeCallId;
@@ -267,6 +264,7 @@ class CallProvider extends ChangeNotifier {
     _cancelCallTimeout();
     NotificationService.onCallAction = null;
     _webrtc.onCallDisconnected = null;
+    _webrtc.onQualityChanged = null;
     _sigSub?.cancel();
     _stateSub?.cancel();
     super.dispose();
