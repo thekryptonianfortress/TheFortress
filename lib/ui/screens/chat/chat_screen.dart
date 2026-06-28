@@ -33,6 +33,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _ctrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final Map<String, String> _decryptedCache = {};
+  final Map<String, GlobalKey> _msgKeys = {};
   late final MessagingService _msgService;
 
   Message? _replyTo;
@@ -125,6 +126,17 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollCtrl.jumpTo(0);
       }
     });
+  }
+
+  void _scrollToMessage(String messageId) {
+    final key = _msgKeys[messageId];
+    if (key?.currentContext == null) return;
+    Scrollable.ensureVisible(
+      key!.currentContext!,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOut,
+      alignment: 0.5,
+    );
   }
 
   void _onTextChanged(String text) {
@@ -1008,23 +1020,30 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
 
-      items.add(MessageBubble(
-        key: ValueKey(m.id),
-        message: m,
-        myUserId: myUserId,
-        peerName: widget.contact.username,
-        decryptedText: plain,
-        replyToText: replyText,
-        replyToSender: replySenderName,
-        onReply: () => setState(() => _replyTo = m),
-        onLongPress: () => _showMessageOptions(m, plain),
-        onReact: (emoji) => provider.addReaction(
-          peerId: widget.contact.contactId,
-          messageId: m.id,
-          emoji: emoji,
-          recipientVirtualId: widget.contact.virtualId,
+      final msgKey = _msgKeys.putIfAbsent(m.id, () => GlobalKey());
+      items.add(SizedBox(
+        key: msgKey,
+        child: MessageBubble(
+          key: ValueKey(m.id),
+          message: m,
+          myUserId: myUserId,
+          peerName: widget.contact.username,
+          decryptedText: plain,
+          replyToText: replyText,
+          replyToSender: replySenderName,
+          onReply: () => setState(() => _replyTo = m),
+          onReplyTap: m.replyToId != null
+              ? () => _scrollToMessage(m.replyToId!)
+              : null,
+          onLongPress: () => _showMessageOptions(m, plain),
+          onReact: (emoji) => provider.addReaction(
+            peerId: widget.contact.contactId,
+            messageId: m.id,
+            emoji: emoji,
+            recipientVirtualId: widget.contact.virtualId,
+          ),
+          nextAudioSource: nextAudioSource,
         ),
-        nextAudioSource: nextAudioSource,
       ));
     }
 

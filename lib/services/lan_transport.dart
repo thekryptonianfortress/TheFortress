@@ -362,6 +362,20 @@ class LanTransport {
     }
   }
 
+  /// Broadcast a group event to all active group member peers.
+  /// If [memberVirtualIds] is empty, falls back to all currently reachable peers.
+  void broadcastToGroup(
+    List<String> memberVirtualIds,
+    String event,
+    Map<String, dynamic> data,
+  ) {
+    final targets =
+        memberVirtualIds.isNotEmpty ? memberVirtualIds : _peers.keys.toList();
+    for (final vid in targets) {
+      send(vid, event, data);
+    }
+  }
+
   String generateCallId() => _uuid.v4();
 
   void trackCall(String callId, String peerVId) =>

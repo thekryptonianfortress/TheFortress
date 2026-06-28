@@ -7,6 +7,7 @@ import '../data/local/secure_storage.dart';
 import '../data/models/group.dart';
 import '../data/models/group_message.dart';
 import '../services/groups_service.dart';
+import '../services/lan_transport.dart';
 import '../services/signaling_service.dart';
 
 class GroupJoinRequest {
@@ -370,10 +371,19 @@ class GroupsProvider extends ChangeNotifier {
     }
     notifyListeners();
 
+    final group = _groups[groupId];
+    final memberVIds = group?.members
+            .where((m) => m.isActive && m.userId != myId)
+            .map((m) => m.virtualId)
+            .toList() ??
+        const <String>[];
+
     _signaling.sendGroupMessage(
       groupId: groupId,
       messageId: messageId,
       content: content,
+      senderUsername: myUsername,
+      memberVirtualIds: memberVIds,
       replyToId: replyToId,
       attachmentUrl: attachmentUrl,
       attachmentType: attachmentType,
@@ -390,10 +400,12 @@ class GroupsProvider extends ChangeNotifier {
     final editedAt = DateTime.now();
     await _db.updateGroupMessageContent(messageId, newContent, editedAt);
     _updateEdited(groupId, messageId, newContent, editedAt);
+    final memberVIds = _activeMemberVIds(groupId);
     _signaling.emitGroupEditMessage(
       messageId: messageId,
       groupId: groupId,
       newContent: newContent,
+      memberVirtualIds: memberVIds,
     );
   }
 
@@ -403,16 +415,52 @@ class GroupsProvider extends ChangeNotifier {
   }) async {
     await _db.markGroupMessageDeleted(messageId);
     _updateDeleted(groupId, messageId);
-    _signaling.emitGroupDeleteMessage(messageId: messageId, groupId: groupId);
+    final memberVIds = _activeMemberVIds(groupId);
+    _signaling.emitGroupDeleteMessage(
+      messageId: messageId,
+      groupId: groupId,
+      memberVirtualIds: memberVIds,
+    );
   }
 
-  void addReaction({
+  Future<void> addReaction({
     required String groupId,
     required String messageId,
     required String emoji,
-  }) {
+  }) async {
+    if (!_signaling.isConnected) {
+      // Compute updated reactions locally for LAN broadcast
+      final myId = await SecureStorage.getUserId() ?? '';
+      final msgs = _messages[groupId] ?? [];
+      final msg = msgs.where((m) => m.id == messageId).firstOrNull;
+      final updated = Map<String, List<String>>.from(
+        msg?.reactions.map((k, v) => MapEntry(k, List<String>.from(v))) ?? {},
+      );
+      final users = List<String>.from(updated[emoji] ?? []);
+      if (!users.contains(myId)) users.add(myId);
+      updated[emoji] = users;
+      await _db.updateGroupMessageReactions(messageId, updated);
+      _updateReactions(groupId, messageId, updated);
+      notifyListeners();
+      final memberVIds = _groups[groupId]
+              ?.members
+              .where((m) => m.isActive && m.userId != myId)
+              .map((m) => m.virtualId)
+              .toList() ??
+          const <String>[];
+      LanTransport.instance.broadcastToGroup(memberVIds, 'group-reaction-added', {
+        'message_id': messageId,
+        'group_id': groupId,
+        'reactions': updated,
+      });
+      return;
+    }
     _signaling.emitGroupReaction(messageId: messageId, groupId: groupId, emoji: emoji);
   }
+
+  List<String> _activeMemberVIds(String groupId) =>
+      _groups[groupId]?.members.where((m) => m.isActive).map((m) => m.virtualId).toList() ??
+      const <String>[];
 
   Future<void> approveRequest(String groupId, String userId) async {
     await _service.approveRequest(groupId, userId);
@@ -491,7 +539,7 @@ class GroupsProvider extends ChangeNotifier {
   }
 
   void sendTyping(String groupId) {
-    _signaling.sendGroupTyping(groupId: groupId);
+    _signaling.sendGroupTyping(groupId: groupId, memberVirtualIds: _activeMemberVIds(groupId));
   }
 
   static String _messagePreview(String content, String? attachmentType) {

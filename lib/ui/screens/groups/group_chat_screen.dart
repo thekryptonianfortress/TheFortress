@@ -43,6 +43,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   String _myId = '';
   Timer? _pollTimer;
   int _prevMsgCount = 0;
+  final Map<String, GlobalKey> _msgKeys = {};
 
   @override
   void initState() {
@@ -72,6 +73,17 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _recorder.dispose();
     _pollTimer?.cancel();
     super.dispose();
+  }
+
+  void _scrollToMessage(String messageId) {
+    final key = _msgKeys[messageId];
+    if (key?.currentContext == null) return;
+    Scrollable.ensureVisible(
+      key!.currentContext!,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOut,
+      alignment: 0.5,
+    );
   }
 
   void _scrollToBottom() {
@@ -409,7 +421,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                       final showDate = prevMsg == null ||
                           !DateUtils.isSameDay(m.createdAt.toLocal(), prevMsg.createdAt.toLocal());
                       final nextAudioSource = _nextAudio(msgs, m);
+                      final msgKey = _msgKeys.putIfAbsent(m.id, () => GlobalKey());
                       return Column(
+                        key: msgKey,
                         children: [
                           if (showDate) _DateSeparator(date: m.createdAt),
                           _GroupMessageBubble(
@@ -426,6 +440,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                               messageId: m.id,
                               emoji: emoji,
                             ),
+                            onReplyTap: m.replyToId != null
+                                ? () => _scrollToMessage(m.replyToId!)
+                                : null,
                           ),
                         ],
                       );
@@ -605,6 +622,7 @@ class _GroupMessageBubble extends StatelessWidget {
   final GroupMessage? replyTo;
   final VoidCallback onLongPress;
   final void Function(String emoji) onReact;
+  final VoidCallback? onReplyTap;
 
   const _GroupMessageBubble({
     required this.message,
@@ -613,6 +631,7 @@ class _GroupMessageBubble extends StatelessWidget {
     this.replyTo,
     required this.onLongPress,
     required this.onReact,
+    this.onReplyTap,
   });
 
   static const _quickEmojis = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
@@ -723,33 +742,36 @@ class _GroupMessageBubble extends StatelessWidget {
                           ),
                         // Reply preview
                         if (replyTo != null && !isDeleted)
-                          Container(
-                            margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                            padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.18),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border(left: BorderSide(
-                                color: isMe ? Colors.white : AppTheme.primary, width: 3)),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  replyTo!.isOutgoing ? 'You' : replyTo!.senderUsername,
-                                  style: TextStyle(
-                                    color: isMe ? Colors.white : AppTheme.primary,
-                                    fontSize: 12, fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 1),
-                                Text(
-                                  replyTo!.isDeleted ? 'Deleted message'
-                                      : (replyTo!.content.isNotEmpty ? replyTo!.content : '📎 Attachment'),
-                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
-                                  maxLines: 2, overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
+                          GestureDetector(
+                            onTap: onReplyTap,
+                            child: Container(
+                              margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                              padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border(left: BorderSide(
+                                  color: isMe ? Colors.white : AppTheme.primary, width: 3)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    replyTo!.isOutgoing ? 'You' : replyTo!.senderUsername,
+                                    style: TextStyle(
+                                      color: isMe ? Colors.white : AppTheme.primary,
+                                      fontSize: 12, fontWeight: FontWeight.w700),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                    replyTo!.isDeleted ? 'Deleted message'
+                                        : (replyTo!.content.isNotEmpty ? replyTo!.content : '📎 Attachment'),
+                                    style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
+                                    maxLines: 2, overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         Padding(

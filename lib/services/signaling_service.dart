@@ -85,6 +85,12 @@ class SignalingService {
     'message-edited': SignalingEvent.messageEdited,
     'message-deleted': SignalingEvent.messageDeleted,
     'reaction-added': SignalingEvent.reactionAdded,
+    // Group events over LAN
+    'group-message': SignalingEvent.groupMessage,
+    'group-message-edited': SignalingEvent.groupMessageEdited,
+    'group-message-deleted': SignalingEvent.groupMessageDeleted,
+    'group-reaction-added': SignalingEvent.groupReactionAdded,
+    'group-user-typing': SignalingEvent.groupUserTyping,
   };
 
   Future<void> connect() async {
@@ -384,12 +390,30 @@ class SignalingService {
     required String groupId,
     required String messageId,
     required String content,
+    String senderUsername = '',
+    List<String> memberVirtualIds = const [],
     String? replyToId,
     String? attachmentUrl,
     String? attachmentType,
     String? attachmentName,
     int? attachmentSize,
   }) {
+    if (!_isConnected && _lan != null) {
+      _lan!.broadcastToGroup(memberVirtualIds, 'group-message', {
+        'id': messageId,
+        'group_id': groupId,
+        'sender_id': _lan!.myUserId,
+        'sender_username': senderUsername,
+        'content': content,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        if (replyToId != null) 'reply_to_id': replyToId,
+        if (attachmentUrl != null) 'attachment_url': attachmentUrl,
+        if (attachmentType != null) 'attachment_type': attachmentType,
+        if (attachmentName != null) 'attachment_name': attachmentName,
+        if (attachmentSize != null) 'attachment_size': attachmentSize,
+      });
+      return;
+    }
     _socket?.emit('group-send-message', {
       'group_id': groupId,
       'message_id': messageId,
@@ -402,7 +426,14 @@ class SignalingService {
     });
   }
 
-  void sendGroupTyping({required String groupId}) {
+  void sendGroupTyping({required String groupId, List<String> memberVirtualIds = const []}) {
+    if (!_isConnected && _lan != null) {
+      _lan!.broadcastToGroup(memberVirtualIds, 'group-user-typing', {
+        'group_id': groupId,
+        'user_id': _lan!.myUserId,
+      });
+      return;
+    }
     _socket?.emit('group-typing', {'group_id': groupId});
   }
 
@@ -410,7 +441,17 @@ class SignalingService {
     required String messageId,
     required String groupId,
     required String newContent,
+    List<String> memberVirtualIds = const [],
   }) {
+    if (!_isConnected && _lan != null) {
+      _lan!.broadcastToGroup(memberVirtualIds, 'group-message-edited', {
+        'message_id': messageId,
+        'group_id': groupId,
+        'new_content': newContent,
+        'edited_at': DateTime.now().toUtc().toIso8601String(),
+      });
+      return;
+    }
     _socket?.emit('group-edit-message', {
       'message_id': messageId,
       'group_id': groupId,
@@ -421,7 +462,15 @@ class SignalingService {
   void emitGroupDeleteMessage({
     required String messageId,
     required String groupId,
+    List<String> memberVirtualIds = const [],
   }) {
+    if (!_isConnected && _lan != null) {
+      _lan!.broadcastToGroup(memberVirtualIds, 'group-message-deleted', {
+        'message_id': messageId,
+        'group_id': groupId,
+      });
+      return;
+    }
     _socket?.emit('group-delete-message', {
       'message_id': messageId,
       'group_id': groupId,

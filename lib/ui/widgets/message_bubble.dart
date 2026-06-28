@@ -20,6 +20,7 @@ class MessageBubble extends StatefulWidget {
   final String myUserId;
   final String peerName;
   final VoidCallback? onReply;
+  final VoidCallback? onReplyTap;
   final VoidCallback? onLongPress;
   final void Function(String emoji)? onReact;
   final String? nextAudioSource;
@@ -33,6 +34,7 @@ class MessageBubble extends StatefulWidget {
     this.replyToSender,
     this.replyToText,
     this.onReply,
+    this.onReplyTap,
     this.onLongPress,
     this.onReact,
     this.nextAudioSource,
@@ -330,6 +332,7 @@ class _MessageBubbleState extends State<MessageBubble>
                           senderName: widget.replyToSender ?? '',
                           text: widget.replyToText!,
                           isMe: isMe,
+                          onTap: widget.onReplyTap,
                         ),
                       // Content
                       Padding(
@@ -652,11 +655,13 @@ class _ReplyPreview extends StatelessWidget {
   final String senderName;
   final String text;
   final bool isMe;
+  final VoidCallback? onTap;
 
   const _ReplyPreview({
     required this.senderName,
     required this.text,
     required this.isMe,
+    this.onTap,
   });
 
   @override
@@ -664,7 +669,9 @@ class _ReplyPreview extends StatelessWidget {
     final accentColor = isMe ? Colors.white : AppTheme.primary;
     final bgColor = Colors.black.withValues(alpha: 0.18);
 
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
       decoration: BoxDecoration(
@@ -698,6 +705,7 @@ class _ReplyPreview extends StatelessWidget {
           ),
         ],
       ),
+    ),
     );
   }
 }
