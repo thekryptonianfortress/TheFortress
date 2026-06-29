@@ -22,6 +22,8 @@ class WebRTCService {
   DateTime? _callStartTime;
   bool _hasRemoteDescription = false;
   bool _iceRestartAttempted = false;
+  bool _isVideo = false;
+  bool _isFrontCamera = true;
   Timer? _disconnectGraceTimer;
 
   // Buffer outbound ICE candidates until server assigns a call_id
@@ -31,9 +33,14 @@ class WebRTCService {
 
   /// Called when the peer connection fails irrecoverably during an active call.
   VoidCallback? onCallDisconnected;
-
+  /// Called when remote stream is available (video calls).
+  void Function(MediaStream)? onRemoteStream;
   /// Called whenever call quality changes.
   void Function(CallQuality)? onQualityChanged;
+
+  bool get isVideo => _isVideo;
+  MediaStream? get localStream => _localStream;
+  MediaStream? get remoteStream => _remoteStream;
 
   final _stateController = StreamController<CallState>.broadcast();
   Stream<CallState> get stateStream => _stateController.stream;
@@ -76,6 +83,7 @@ class WebRTCService {
     _pc!.onTrack = (event) {
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams.first;
+        onRemoteStream?.call(_remoteStream!);
       }
     };
 
@@ -147,14 +155,21 @@ class WebRTCService {
     }
   }
 
-  Future<Map<String, dynamic>> startCall({required String targetVirtualId}) async {
+  Future<Map<String, dynamic>> startCall({
+    required String targetVirtualId,
+    bool isVideo = false,
+  }) async {
+    _isVideo = isVideo;
     await _createPeerConnection();
-    _localStream = await _getLocalAudio();
-    for (final track in _localStream!.getAudioTracks()) {
+    _localStream = isVideo ? await _getLocalVideo() : await _getLocalAudio();
+    for (final track in _localStream!.getTracks()) {
       await _pc!.addTrack(track, _localStream!);
     }
 
-    final offer = await _pc!.createOffer({'offerToReceiveAudio': true});
+    final constraints = isVideo
+        ? {'offerToReceiveAudio': true, 'offerToReceiveVideo': true}
+        : {'offerToReceiveAudio': true};
+    final offer = await _pc!.createOffer(constraints);
     await _pc!.setLocalDescription(offer);
     _setState(CallState.calling);
 
@@ -164,11 +179,13 @@ class WebRTCService {
   Future<Map<String, dynamic>> answerCall({
     required String callId,
     required Map<String, dynamic> offerSdp,
+    bool isVideo = false,
   }) async {
+    _isVideo = isVideo;
     _activeCallId = callId;
     await _createPeerConnection();
-    _localStream = await _getLocalAudio();
-    for (final track in _localStream!.getAudioTracks()) {
+    _localStream = isVideo ? await _getLocalVideo() : await _getLocalAudio();
+    for (final track in _localStream!.getTracks()) {
       await _pc!.addTrack(track, _localStream!);
     }
 
@@ -177,18 +194,33 @@ class WebRTCService {
     );
     _hasRemoteDescription = true;
 
-    // Flush any remote ICE candidates that arrived before setRemoteDescription
     for (final c in _pendingRemoteCandidates) {
       await _addRemoteCandidate(c);
     }
     _pendingRemoteCandidates.clear();
 
-    final answer = await _pc!.createAnswer({'offerToReceiveAudio': true});
+    final constraints = isVideo
+        ? {'offerToReceiveAudio': true, 'offerToReceiveVideo': true}
+        : {'offerToReceiveAudio': true};
+    final answer = await _pc!.createAnswer(constraints);
     await _pc!.setLocalDescription(answer);
     _callStartTime = DateTime.now();
     _setState(CallState.active);
 
     return {'type': answer.type, 'sdp': answer.sdp};
+  }
+
+  Future<void> toggleCamera() async {
+    if (!_isVideo || _localStream == null) return;
+    _isFrontCamera = !_isFrontCamera;
+    final videoTrack = _localStream!.getVideoTracks().firstOrNull;
+    if (videoTrack != null) {
+      await Helper.switchCamera(videoTrack);
+    }
+  }
+
+  void setVideoEnabled(bool enabled) {
+    _localStream?.getVideoTracks().forEach((t) => t.enabled = enabled);
   }
 
   /// Called when the server acks the offer with the assigned call_id.
@@ -265,6 +297,7 @@ class WebRTCService {
     _remoteStream = null;
     _activeCallId = null;
     _callStartTime = null;
+    _isVideo = false;
     _quality = CallQuality.connecting;
     _setState(CallState.ended);
     Future.delayed(const Duration(milliseconds: 300), () => _setState(CallState.idle));
@@ -272,12 +305,15 @@ class WebRTCService {
 
   Future<MediaStream> _getLocalAudio() async {
     return navigator.mediaDevices.getUserMedia({
-      'audio': {
-        'echoCancellation': true,
-        'noiseSuppression': true,
-        'autoGainControl': true,
-      },
+      'audio': {'echoCancellation': true, 'noiseSuppression': true, 'autoGainControl': true},
       'video': false,
+    });
+  }
+
+  Future<MediaStream> _getLocalVideo() async {
+    return navigator.mediaDevices.getUserMedia({
+      'audio': {'echoCancellation': true, 'noiseSuppression': true, 'autoGainControl': true},
+      'video': {'facingMode': 'user', 'width': 640, 'height': 480},
     });
   }
 

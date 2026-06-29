@@ -7,6 +7,7 @@ import 'providers/auto_download_provider.dart';
 import 'providers/backup_provider.dart';
 import 'providers/call_provider.dart';
 import 'providers/contacts_provider.dart';
+import 'providers/group_call_provider.dart';
 import 'providers/groups_provider.dart';
 import 'providers/messages_provider.dart';
 import 'services/groups_service.dart';
@@ -17,6 +18,7 @@ import 'services/webrtc_service.dart';
 import 'ui/screens/auth/login_screen.dart';
 import 'ui/screens/auth/register_screen.dart';
 import 'ui/screens/call/active_call_screen.dart';
+import 'ui/screens/call/group_call_screen.dart';
 import 'ui/screens/call/incoming_call_screen.dart';
 import 'ui/screens/call/outgoing_call_screen.dart';
 import 'ui/screens/chat/chat_screen.dart';
@@ -75,6 +77,9 @@ class PagerApp extends StatelessWidget {
           create: (_) => CallProvider(signaling, webrtc),
         ),
         ChangeNotifierProvider(
+          create: (_) => GroupCallProvider(signaling),
+        ),
+        ChangeNotifierProvider(
           create: (_) => GroupsProvider(GroupsService(), signaling),
         ),
         Provider<SignalingService>.value(value: signaling),
@@ -103,8 +108,19 @@ class PagerApp extends StatelessWidget {
               final contact = settings.arguments as Contact;
               return MaterialPageRoute(builder: (_) => ChatScreen(contact: contact));
             case '/call/outgoing':
-              final contact = settings.arguments as Contact;
-              return MaterialPageRoute(builder: (_) => OutgoingCallScreen(contact: contact));
+              final args = settings.arguments;
+              final Contact contact;
+              bool isVideo = false;
+              if (args is Map) {
+                contact = args['contact'] as Contact;
+                isVideo = args['isVideo'] as bool? ?? false;
+              } else {
+                contact = args as Contact;
+              }
+              return MaterialPageRoute(
+                  builder: (_) => OutgoingCallScreen(contact: contact, isVideo: isVideo));
+            case '/call/group':
+              return MaterialPageRoute(builder: (_) => const GroupCallScreen());
             case '/call/active':
               return MaterialPageRoute(builder: (_) => const ActiveCallScreen());
             case '/call/incoming':
@@ -135,10 +151,25 @@ class _IncomingCallListener extends StatefulWidget {
 class _IncomingCallListenerState extends State<_IncomingCallListener> {
   bool _incomingPushed = false;
   bool _activePushed = false;
+  bool _groupIncomingPushed = false;
 
   @override
   Widget build(BuildContext context) {
     final call = context.watch<CallProvider>();
+    final groupCall = context.watch<GroupCallProvider>();
+
+    // ── Incoming group call → push /call/group (which shows accept/decline) ──
+    if (groupCall.hasIncomingGroupCall && !_groupIncomingPushed) {
+      _groupIncomingPushed = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _navigatorKey.currentState
+            ?.pushNamed('/call/group')
+            .then((_) => _groupIncomingPushed = false);
+      });
+    }
+    if (!groupCall.hasIncomingGroupCall && _groupIncomingPushed) {
+      _groupIncomingPushed = false;
+    }
 
     // ── Incoming call → push /call/incoming ──────────────────────────────────
     if (call.incomingCall != null && !_incomingPushed) {

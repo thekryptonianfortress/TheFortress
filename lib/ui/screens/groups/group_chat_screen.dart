@@ -20,6 +20,7 @@ import '../../../data/models/contact.dart';
 import '../../../data/models/group.dart';
 import '../../../data/models/group_message.dart';
 import '../../../providers/contacts_provider.dart';
+import '../../../providers/group_call_provider.dart';
 import '../../../providers/groups_provider.dart';
 import '../../../providers/messages_provider.dart';
 import '../../../services/media_service.dart';
@@ -688,30 +689,86 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ],
             ),
           IconButton(
+            icon: const Icon(Icons.call_rounded, color: AppTheme.onSurface),
+            tooltip: 'Voice call',
+            onPressed: () {
+              context.read<GroupCallProvider>().startCall(
+                groupId: group.id,
+                groupName: group.name,
+                isVideo: false,
+              );
+              Navigator.pushNamed(context, '/call/group');
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.videocam_rounded, color: AppTheme.onSurface),
+            tooltip: 'Video call',
+            onPressed: () {
+              context.read<GroupCallProvider>().startCall(
+                groupId: group.id,
+                groupName: group.name,
+                isVideo: true,
+              );
+              Navigator.pushNamed(context, '/call/group');
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.search_rounded, color: AppTheme.onSurface),
             tooltip: 'Search',
             onPressed: () => setState(() { _searchMode = true; _searchQuery = ''; }),
           ),
-          IconButton(
-            icon: Icon(Icons.star_rounded,
-                color: _starredIds.isNotEmpty ? Colors.amber : AppTheme.onSurface),
-            tooltip: 'Starred messages',
-            onPressed: () => _showStarredMessages(msgs),
-          ),
-          IconButton(
-            icon: Icon(
-              _isMuted ? Icons.notifications_off_rounded : Icons.notifications_rounded,
-              color: _isMuted ? AppTheme.muted : AppTheme.onSurface,
-            ),
-            tooltip: _isMuted ? 'Unmute' : 'Mute notifications',
-            onPressed: _toggleMute,
-          ),
-          IconButton(
-            icon: const Icon(Icons.info_outline_rounded, color: AppTheme.onSurface),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => GroupInfoScreen(group: group)),
-            ).then((_) => setState(() {})),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded, color: AppTheme.onSurface),
+            color: AppTheme.surface,
+            onSelected: (value) {
+              switch (value) {
+                case 'starred':
+                  _showStarredMessages(msgs);
+                case 'mute':
+                  _toggleMute();
+                case 'info':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => GroupInfoScreen(group: group)),
+                  ).then((_) => setState(() {}));
+              }
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'starred',
+                child: Row(
+                  children: [
+                    Icon(Icons.star_rounded,
+                        color: _starredIds.isNotEmpty ? Colors.amber : AppTheme.muted, size: 20),
+                    const SizedBox(width: 12),
+                    const Text('Starred messages'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'mute',
+                child: Row(
+                  children: [
+                    Icon(
+                      _isMuted ? Icons.notifications_rounded : Icons.notifications_off_rounded,
+                      color: AppTheme.muted, size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(_isMuted ? 'Unmute' : 'Mute'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'info',
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded, color: AppTheme.muted, size: 20),
+                    SizedBox(width: 12),
+                    Text('Group info'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),

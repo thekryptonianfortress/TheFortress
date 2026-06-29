@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
 import '../../../providers/call_provider.dart';
@@ -65,6 +66,136 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
         final isReconnecting = quality == CallQuality.reconnecting ||
             quality == CallQuality.poor;
 
+        // ── VIDEO CALL layout ──────────────────────────────────
+        if (call.isVideo) {
+          return Scaffold(
+            backgroundColor: Colors.black,
+            body: Stack(
+              children: [
+                // Remote video fullscreen
+                Positioned.fill(
+                  child: RTCVideoView(
+                    call.remoteRenderer,
+                    objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                    mirror: false,
+                  ),
+                ),
+                // Dark overlay at top for controls
+                Positioned(
+                  top: 0, left: 0, right: 0,
+                  child: Container(
+                    height: 120,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
+                      ),
+                    ),
+                  ),
+                ),
+                // Top bar: peer name + timer
+                SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(peerName,
+                                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+                              Text(_duration,
+                                  style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                            ],
+                          ),
+                        ),
+                        _QualityBadge(quality: quality, reconnectCtrl: _reconnectCtrl, isReconnecting: isReconnecting),
+                      ],
+                    ),
+                  ),
+                ),
+                // Local video preview (top-right corner)
+                Positioned(
+                  top: 80, right: 16,
+                  child: SafeArea(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox(
+                        width: 90, height: 130,
+                        child: call.isCameraOn
+                            ? RTCVideoView(call.localRenderer, mirror: true,
+                                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)
+                            : Container(color: Colors.black87,
+                                child: const Center(child: Icon(Icons.videocam_off_rounded, color: Colors.white54, size: 28))),
+                      ),
+                    ),
+                  ),
+                ),
+                // Controls overlay at bottom
+                Positioned(
+                  bottom: 0, left: 0, right: 0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [Colors.black.withValues(alpha: 0.8), Colors.transparent],
+                      ),
+                    ),
+                    child: SafeArea(
+                      top: false,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            _ControlButton(
+                              icon: call.isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                              label: call.isMuted ? 'Unmute' : 'Mute',
+                              active: call.isMuted,
+                              activeColor: AppTheme.primary,
+                              onTap: call.toggleMute,
+                            ),
+                            _ControlButton(
+                              icon: call.isCameraOn ? Icons.videocam_rounded : Icons.videocam_off_rounded,
+                              label: call.isCameraOn ? 'Camera' : 'Cam Off',
+                              active: !call.isCameraOn,
+                              activeColor: Colors.red,
+                              onTap: call.toggleVideo,
+                            ),
+                            _EndButton(onTap: () {
+                              call.endCall();
+                              Navigator.of(context).popUntil((r) => r.isFirst);
+                            }),
+                            _ControlButton(
+                              icon: Icons.flip_camera_ios_rounded,
+                              label: 'Flip',
+                              active: false,
+                              activeColor: AppTheme.primary,
+                              onTap: () => call.toggleCamera(),
+                            ),
+                            _ControlButton(
+                              icon: call.isSpeakerOn ? Icons.volume_up_rounded : Icons.volume_down_rounded,
+                              label: call.isSpeakerOn ? 'Speaker' : 'Earpiece',
+                              active: call.isSpeakerOn,
+                              activeColor: AppTheme.primary,
+                              onTap: call.toggleSpeaker,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        // ── AUDIO CALL layout ──────────────────────────────────
         return Scaffold(
           body: Container(
             decoration: const BoxDecoration(
@@ -86,7 +217,6 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                     padding: const EdgeInsets.only(top: 32, bottom: 16),
                     child: Column(
                       children: [
-                        // Timer
                         Text(
                           _duration,
                           style: const TextStyle(
@@ -98,7 +228,6 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                           ),
                         ),
                         const SizedBox(height: 8),
-                        // Quality badge
                         _QualityBadge(
                           quality: quality,
                           reconnectCtrl: _reconnectCtrl,
@@ -110,74 +239,44 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
 
                   const Spacer(),
 
-                  // ── Avatar ────────────────────────────────────────
-                  UserAvatar(
-                    username: peerName,
-                    avatarUrl: peerAvatar,
-                    radius: 72,
-                    fontSize: 52,
-                  ),
+                  UserAvatar(username: peerName, avatarUrl: peerAvatar, radius: 72, fontSize: 52),
                   const SizedBox(height: 24),
 
-                  // ── Peer name ─────────────────────────────────────
-                  Text(
-                    peerName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
+                  Text(peerName,
+                    style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w700, letterSpacing: -0.3)),
                   const SizedBox(height: 6),
                   Text(
                     isReconnecting ? 'Reconnecting...' : 'Connected',
                     style: TextStyle(
-                      color: isReconnecting
-                          ? Colors.amber.shade400
-                          : AppTheme.accent,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
+                      color: isReconnecting ? Colors.amber.shade400 : AppTheme.accent,
+                      fontSize: 14, fontWeight: FontWeight.w500,
                     ),
                   ),
 
                   const Spacer(),
 
-                  // ── Controls ──────────────────────────────────────
                   Padding(
                     padding: const EdgeInsets.only(bottom: 56, left: 16, right: 16),
-                    child: Column(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        // Main row: Mute | End | Speaker
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            _ControlButton(
-                              icon: call.isMuted
-                                  ? Icons.mic_off_rounded
-                                  : Icons.mic_rounded,
-                              label: call.isMuted ? 'Unmute' : 'Mute',
-                              active: call.isMuted,
-                              activeColor: AppTheme.primary,
-                              onTap: call.toggleMute,
-                            ),
-                            // End call (larger)
-                            _EndButton(
-                              onTap: () {
-                                call.endCall();
-                                Navigator.of(context).popUntil((r) => r.isFirst);
-                              },
-                            ),
-                            _ControlButton(
-                              icon: call.isSpeakerOn
-                                  ? Icons.volume_up_rounded
-                                  : Icons.volume_down_rounded,
-                              label: call.isSpeakerOn ? 'Speaker' : 'Earpiece',
-                              active: call.isSpeakerOn,
-                              activeColor: AppTheme.primary,
-                              onTap: call.toggleSpeaker,
-                            ),
-                          ],
+                        _ControlButton(
+                          icon: call.isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                          label: call.isMuted ? 'Unmute' : 'Mute',
+                          active: call.isMuted,
+                          activeColor: AppTheme.primary,
+                          onTap: call.toggleMute,
+                        ),
+                        _EndButton(onTap: () {
+                          call.endCall();
+                          Navigator.of(context).popUntil((r) => r.isFirst);
+                        }),
+                        _ControlButton(
+                          icon: call.isSpeakerOn ? Icons.volume_up_rounded : Icons.volume_down_rounded,
+                          label: call.isSpeakerOn ? 'Speaker' : 'Earpiece',
+                          active: call.isSpeakerOn,
+                          activeColor: AppTheme.primary,
+                          onTap: call.toggleSpeaker,
                         ),
                       ],
                     ),

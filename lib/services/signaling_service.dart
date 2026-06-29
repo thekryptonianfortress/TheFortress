@@ -43,6 +43,15 @@ enum SignalingEvent {
   groupPinChanged,
   groupPollVoted,
   contactAutoAdded,
+  // Group call events
+  groupCallIncoming,
+  groupCallJoined,
+  groupCallMemberJoined,
+  groupCallMemberLeft,
+  gcIncomingOffer,
+  gcCallAnswered,
+  gcIceCandidate,
+  gcPeerEnded,
 }
 
 class SignalingMessage {
@@ -199,6 +208,24 @@ class SignalingService {
         _emit(SignalingEvent.groupPollVoted, Map<String, dynamic>.from(data as Map)));
     _socket!.on('contact-auto-added', (data) =>
         _emit(SignalingEvent.contactAutoAdded, Map<String, dynamic>.from(data as Map)));
+    // Group call room events
+    _socket!.on('group-call-incoming', (data) =>
+        _emit(SignalingEvent.groupCallIncoming, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-call-joined', (data) =>
+        _emit(SignalingEvent.groupCallJoined, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-call-member-joined', (data) =>
+        _emit(SignalingEvent.groupCallMemberJoined, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-call-member-left', (data) =>
+        _emit(SignalingEvent.groupCallMemberLeft, Map<String, dynamic>.from(data as Map)));
+    // Group call P2P events
+    _socket!.on('gc-incoming-offer', (data) =>
+        _emit(SignalingEvent.gcIncomingOffer, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('gc-call-answered', (data) =>
+        _emit(SignalingEvent.gcCallAnswered, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('gc-ice-candidate', (data) =>
+        _emit(SignalingEvent.gcIceCandidate, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('gc-peer-ended', (data) =>
+        _emit(SignalingEvent.gcPeerEnded, Map<String, dynamic>.from(data as Map)));
   }
 
   void _emit(SignalingEvent event, Map<String, dynamic> data) {
@@ -212,6 +239,7 @@ class SignalingService {
     required Map<String, dynamic> sdp,
     required String callerUsername,
     required String callerVirtualId,
+    bool isVideo = false,
   }) {
     if (_lan != null && _lan!.isReachable(targetVirtualId)) {
       // Generate callId locally (normally the server assigns this)
@@ -232,6 +260,7 @@ class SignalingService {
       'sdp': sdp,
       'caller_username': callerUsername,
       'caller_virtual_id': callerVirtualId,
+      'is_video': isVideo,
     });
   }
 
@@ -280,6 +309,60 @@ class SignalingService {
       }
     }
     _socket?.emit('ice-candidate', {'call_id': callId, 'candidate': candidate});
+  }
+
+  // ── Outbound: Group Calls ──────────────────────────────────
+
+  void sendGroupCallStart(String groupId, bool isVideo, String virtualId, String username) {
+    _socket?.emit('group-call-start', {
+      'group_id': groupId, 'is_video': isVideo, 'virtual_id': virtualId, 'username': username,
+    });
+  }
+
+  void sendGroupCallJoin(String groupId, String virtualId, String username) {
+    _socket?.emit('group-call-join', {
+      'group_id': groupId, 'virtual_id': virtualId, 'username': username,
+    });
+  }
+
+  void sendGroupCallLeave(String groupId, String virtualId) {
+    _socket?.emit('group-call-leave', {'group_id': groupId, 'virtual_id': virtualId});
+  }
+
+  void sendGcOffer({
+    required String targetVirtualId,
+    required Map<String, dynamic> sdp,
+    required String fromVirtualId,
+    required String fromUsername,
+    required String groupId,
+    required String connId,
+    required bool isVideo,
+  }) {
+    _socket?.emit('gc-offer', {
+      'target_virtual_id': targetVirtualId, 'sdp': sdp,
+      'from_virtual_id': fromVirtualId, 'from_username': fromUsername,
+      'group_id': groupId, 'conn_id': connId, 'is_video': isVideo,
+    });
+  }
+
+  void sendGcAnswer({
+    required String targetVirtualId,
+    required Map<String, dynamic> sdp,
+    required String connId,
+  }) {
+    _socket?.emit('gc-answer', {'target_virtual_id': targetVirtualId, 'sdp': sdp, 'conn_id': connId});
+  }
+
+  void sendGcIce({
+    required String targetVirtualId,
+    required Map<String, dynamic> candidate,
+    required String connId,
+  }) {
+    _socket?.emit('gc-ice', {'target_virtual_id': targetVirtualId, 'candidate': candidate, 'conn_id': connId});
+  }
+
+  void sendGcPeerEnd({required String targetVirtualId}) {
+    _socket?.emit('gc-peer-end', {'target_virtual_id': targetVirtualId});
   }
 
   // ── Outbound: Messaging ────────────────────────────────────

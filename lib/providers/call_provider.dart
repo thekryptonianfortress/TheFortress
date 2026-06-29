@@ -14,11 +14,13 @@ class IncomingCallInfo {
   final String callerVirtualId;
   final String callerUsername;
   final Map<String, dynamic> offerSdp;
+  final bool isVideo;
   const IncomingCallInfo({
     required this.callId,
     required this.callerVirtualId,
     required this.callerUsername,
     required this.offerSdp,
+    this.isVideo = false,
   });
 }
 
@@ -33,15 +35,23 @@ class CallProvider extends ChangeNotifier {
   CallDirection _callDirection = CallDirection.outgoing;
   bool _isMuted = false;
   bool _isSpeakerOn = false;
+  bool _isVideo = false;
+  bool _isCameraOn = true;
   StreamSubscription<SignalingMessage>? _sigSub;
   StreamSubscription<CallState>? _stateSub;
   Timer? _callTimeoutTimer;
+
+  final localRenderer = RTCVideoRenderer();
+  final remoteRenderer = RTCVideoRenderer();
+  bool _renderersInitialized = false;
 
   IncomingCallInfo? get incomingCall => _incomingCall;
   CallState get callState => _webrtc.state;
   CallQuality get callQuality => _webrtc.quality;
   bool get isMuted => _isMuted;
   bool get isSpeakerOn => _isSpeakerOn;
+  bool get isVideo => _isVideo;
+  bool get isCameraOn => _isCameraOn;
   String? get activePeerUsername => _activePeerUsername;
   String? get activePeerVirtualId => _activePeerVirtualId;
 
@@ -125,6 +135,7 @@ class CallProvider extends ChangeNotifier {
       callerVirtualId: data['caller_virtual_id'] as String,
       callerUsername: data['caller_username'] as String,
       offerSdp: Map<String, dynamic>.from(data['sdp'] as Map),
+      isVideo: data['is_video'] as bool? ?? false,
     );
     NotificationService.showCallNotification(
       callerName: _incomingCall!.callerUsername,
@@ -135,14 +146,33 @@ class CallProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _initRenderers() async {
+    if (!_renderersInitialized) {
+      await localRenderer.initialize();
+      await remoteRenderer.initialize();
+      _renderersInitialized = true;
+    }
+  }
+
   Future<void> startCall({
     required String targetVirtualId,
     required String targetUsername,
+    bool isVideo = false,
   }) async {
+    _isVideo = isVideo;
+    _isCameraOn = true;
     _activePeerVirtualId = targetVirtualId;
     _activePeerUsername = targetUsername;
     _callDirection = CallDirection.outgoing;
-    final offerSdp = await _webrtc.startCall(targetVirtualId: targetVirtualId);
+    if (isVideo) {
+      await _initRenderers();
+      _webrtc.onRemoteStream = (stream) {
+        remoteRenderer.srcObject = stream;
+        notifyListeners();
+      };
+    }
+    final offerSdp = await _webrtc.startCall(targetVirtualId: targetVirtualId, isVideo: isVideo);
+    if (isVideo) localRenderer.srcObject = _webrtc.localStream;
     final myUsername = await SecureStorage.getUsername() ?? '';
     final myVirtualId = await SecureStorage.getVirtualId() ?? '';
     _signaling.sendCallOffer(
@@ -150,6 +180,7 @@ class CallProvider extends ChangeNotifier {
       sdp: offerSdp,
       callerUsername: myUsername,
       callerVirtualId: myVirtualId,
+      isVideo: isVideo,
     );
     // Default to earpiece (speaker off) — user can toggle if desired
     _isSpeakerOn = false;
@@ -174,19 +205,30 @@ class CallProvider extends ChangeNotifier {
     _activePeerVirtualId = info.callerVirtualId;
     _activePeerUsername = info.callerUsername;
     _callDirection = CallDirection.incoming;
+    _isVideo = info.isVideo;
+    _isCameraOn = true;
 
     NotificationService.stopRingtone();
     NotificationService.cancelAll();
 
+    if (info.isVideo) {
+      await _initRenderers();
+      _webrtc.onRemoteStream = (stream) {
+        remoteRenderer.srcObject = stream;
+        notifyListeners();
+      };
+    }
+
     final answerSdp = await _webrtc.answerCall(
       callId: info.callId,
       offerSdp: info.offerSdp,
+      isVideo: info.isVideo,
     );
+    if (info.isVideo) localRenderer.srcObject = _webrtc.localStream;
     _signaling.sendCallAnswer(callId: info.callId, sdp: answerSdp);
     _incomingCall = null;
-    // Default to earpiece — user can switch to speaker
-    _isSpeakerOn = false;
-    Helper.setSpeakerphoneOn(false);
+    _isSpeakerOn = info.isVideo; // default speaker on for video
+    Helper.setSpeakerphoneOn(_isSpeakerOn);
     notifyListeners();
   }
 
@@ -221,6 +263,17 @@ class CallProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> toggleCamera() async {
+    await _webrtc.toggleCamera();
+    notifyListeners();
+  }
+
+  void toggleVideo() {
+    _isCameraOn = !_isCameraOn;
+    _webrtc.setVideoEnabled(_isCameraOn);
+    notifyListeners();
+  }
+
   void _cancelCallTimeout() {
     _callTimeoutTimer?.cancel();
     _callTimeoutTimer = null;
@@ -237,6 +290,11 @@ class CallProvider extends ChangeNotifier {
     _activePeerVirtualId = null;
     _isMuted = false;
     _isSpeakerOn = false;
+    _isVideo = false;
+    _isCameraOn = true;
+    localRenderer.srcObject = null;
+    remoteRenderer.srcObject = null;
+    _webrtc.onRemoteStream = null;
     notifyListeners();
   }
 
@@ -274,8 +332,13 @@ class CallProvider extends ChangeNotifier {
     NotificationService.onCallAction = null;
     _webrtc.onCallDisconnected = null;
     _webrtc.onQualityChanged = null;
+    _webrtc.onRemoteStream = null;
     _sigSub?.cancel();
     _stateSub?.cancel();
+    if (_renderersInitialized) {
+      localRenderer.dispose();
+      remoteRenderer.dispose();
+    }
     super.dispose();
   }
 }

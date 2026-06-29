@@ -3,6 +3,10 @@ const db = require('./db');
 
 // Map: userId -> socketId
 const onlineUsers = new Map();
+// Map: virtualId -> socketId  (for direct routing in group call P2P)
+const virtualIdToSocket = new Map();
+// Map: groupId -> [{userId, virtualId, username}]
+const groupCallRooms = new Map();
 let _io = null;
 
 function getIo() { return _io; }
@@ -18,12 +22,14 @@ function parseCallId(callId) {
 
 function setupSignaling(io) {
   _io = io;
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('Unauthorized'));
     try {
       const payload = jwt.verify(token, process.env.JWT_SECRET);
       socket.userId = payload.sub;
+      const res = await db.query('SELECT virtual_id FROM users WHERE id = $1', [payload.sub]);
+      socket.virtualId = res.rows[0]?.virtual_id || null;
       next();
     } catch (err) {
       next(new Error('Invalid token'));
@@ -33,6 +39,7 @@ function setupSignaling(io) {
   io.on('connection', async (socket) => {
     const userId = socket.userId;
     onlineUsers.set(userId, socket.id);
+    if (socket.virtualId) virtualIdToSocket.set(socket.virtualId, socket.id);
     console.log(`[socket] connected userId=${userId} online=${onlineUsers.size}`);
 
     await db.query('UPDATE users SET last_seen = NOW() WHERE id = $1', [userId]);
@@ -124,14 +131,14 @@ function setupSignaling(io) {
     // ── Call Signaling ─────────────────────────────────────────
 
     socket.on('call-offer', async (data) => {
-      const { target_virtual_id, sdp, caller_username, caller_virtual_id } = data;
+      const { target_virtual_id, sdp, caller_username, caller_virtual_id, is_video } = data;
       const target = await getUserByVirtualId(target_virtual_id);
       if (!target) return;
 
       const callId = makeCallId(userId, target.id);
       const targetSocketId = onlineUsers.get(target.id);
 
-      socket.emit('call-offer-ack', { call_id: callId, target_online: !!targetSocketId });
+      socket.emit('call-offer-ack', { call_id: callId, target_virtual_id, target_online: !!targetSocketId });
 
       if (targetSocketId) {
         io.to(targetSocketId).emit('incoming-call', {
@@ -140,6 +147,7 @@ function setupSignaling(io) {
           caller_virtual_id,
           caller_username,
           sdp,
+          is_video: !!is_video,
         });
         sendPushNotification(target.fcm_token, {
           type: 'incoming_call',
@@ -553,10 +561,131 @@ function setupSignaling(io) {
       }
     });
 
+    // ── Group Call Room Management ──────────────────────────────
+
+    socket.on('group-call-start', async (data) => {
+      const { group_id, is_video, virtual_id, username } = data;
+      try {
+        const mc = await db.query(
+          `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+          [group_id, userId]
+        );
+        if (mc.rows.length === 0) return;
+
+        if (!groupCallRooms.has(group_id)) groupCallRooms.set(group_id, []);
+        const room = groupCallRooms.get(group_id);
+        const ei = room.findIndex(p => p.userId === userId);
+        if (ei !== -1) room.splice(ei, 1);
+        room.push({ userId, virtualId: virtual_id, username });
+
+        const groupRes = await db.query('SELECT name FROM groups WHERE id = $1', [group_id]);
+        const groupName = groupRes.rows[0]?.name || 'Group';
+
+        const membersRes = await db.query(
+          `SELECT u.id FROM group_members gm JOIN users u ON u.id = gm.user_id
+           WHERE gm.group_id = $1 AND gm.status = 'active' AND gm.user_id != $2`,
+          [group_id, userId]
+        );
+        for (const m of membersRes.rows) {
+          const s = onlineUsers.get(m.id);
+          if (s) {
+            io.to(s).emit('group-call-incoming', {
+              group_id, group_name: groupName, is_video: !!is_video,
+              caller_virtual_id: virtual_id, caller_username: username,
+            });
+          }
+        }
+      } catch (e) { console.error('[group-call-start]', e.message); }
+    });
+
+    socket.on('group-call-join', async (data) => {
+      const { group_id, virtual_id, username } = data;
+      try {
+        const mc = await db.query(
+          `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+          [group_id, userId]
+        );
+        if (mc.rows.length === 0) return;
+
+        const room = groupCallRooms.get(group_id) || [];
+        const existingParticipants = room.map(p => ({ virtual_id: p.virtualId, username: p.username }));
+        const ei = room.findIndex(p => p.userId === userId);
+        if (ei !== -1) room.splice(ei, 1);
+        room.push({ userId, virtualId: virtual_id, username });
+        groupCallRooms.set(group_id, room);
+
+        socket.emit('group-call-joined', { group_id, participants: existingParticipants });
+
+        for (const p of room) {
+          if (p.userId === userId) continue;
+          const ps = onlineUsers.get(p.userId);
+          if (ps) io.to(ps).emit('group-call-member-joined', { group_id, virtual_id, username });
+        }
+      } catch (e) { console.error('[group-call-join]', e.message); }
+    });
+
+    socket.on('group-call-leave', (data) => {
+      const { group_id } = data;
+      const room = groupCallRooms.get(group_id);
+      if (!room) return;
+      const leaver = room.find(p => p.userId === userId);
+      const idx = room.findIndex(p => p.userId === userId);
+      if (idx !== -1) room.splice(idx, 1);
+      if (room.length === 0) groupCallRooms.delete(group_id);
+      if (leaver) {
+        for (const p of room) {
+          const ps = onlineUsers.get(p.userId);
+          if (ps) io.to(ps).emit('group-call-member-left', { group_id, virtual_id: leaver.virtualId });
+        }
+      }
+    });
+
+    // ── Group Call P2P Signaling (gc-*) ─────────────────────────
+
+    socket.on('gc-offer', (data) => {
+      const { target_virtual_id, sdp, from_virtual_id, from_username, group_id, conn_id, is_video } = data;
+      const ts = virtualIdToSocket.get(target_virtual_id);
+      if (ts) io.to(ts).emit('gc-incoming-offer', { from_virtual_id, from_username, sdp, group_id, conn_id, is_video: !!is_video });
+    });
+
+    socket.on('gc-answer', (data) => {
+      const { target_virtual_id, sdp, conn_id } = data;
+      const ts = virtualIdToSocket.get(target_virtual_id);
+      if (ts) io.to(ts).emit('gc-call-answered', { from_virtual_id: socket.virtualId, sdp, conn_id });
+    });
+
+    socket.on('gc-ice', (data) => {
+      const { target_virtual_id, candidate, conn_id } = data;
+      const ts = virtualIdToSocket.get(target_virtual_id);
+      if (ts) io.to(ts).emit('gc-ice-candidate', { from_virtual_id: socket.virtualId, candidate, conn_id });
+    });
+
+    socket.on('gc-peer-end', (data) => {
+      const { target_virtual_id } = data;
+      const ts = virtualIdToSocket.get(target_virtual_id);
+      if (ts) io.to(ts).emit('gc-peer-ended', { from_virtual_id: socket.virtualId });
+    });
+
     // ── Disconnect ─────────────────────────────────────────────
 
     socket.on('disconnect', async () => {
       onlineUsers.delete(userId);
+      if (socket.virtualId) virtualIdToSocket.delete(socket.virtualId);
+      // Clean up group call rooms on disconnect
+      for (const [gid, room] of groupCallRooms.entries()) {
+        const idx = room.findIndex(p => p.userId === userId);
+        if (idx !== -1) {
+          const leaver = room[idx];
+          room.splice(idx, 1);
+          if (room.length === 0) { groupCallRooms.delete(gid); }
+          else {
+            for (const p of room) {
+              const ps = onlineUsers.get(p.userId);
+              if (ps) io.to(ps).emit('gc-peer-ended', { from_virtual_id: leaver.virtualId });
+            }
+          }
+        }
+      }
       console.log(`[socket] disconnected userId=${userId} online=${onlineUsers.size}`);
       const now = new Date().toISOString();
       await db.query('UPDATE users SET last_seen = NOW() WHERE id = $1', [userId]);

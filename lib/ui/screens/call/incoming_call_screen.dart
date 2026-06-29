@@ -87,15 +87,19 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
           child: Column(
             children: [
               // Top label
-              const Padding(
-                padding: EdgeInsets.only(top: 52),
+              Padding(
+                padding: const EdgeInsets.only(top: 52),
                 child: Column(
                   children: [
-                    Icon(Icons.call_rounded, color: AppTheme.accent, size: 20),
-                    SizedBox(height: 6),
+                    Icon(
+                      info.isVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                      color: AppTheme.accent,
+                      size: 20,
+                    ),
+                    const SizedBox(height: 6),
                     Text(
-                      'Incoming Voice Call',
-                      style: TextStyle(
+                      info.isVideo ? 'Incoming Video Call' : 'Incoming Voice Call',
+                      style: const TextStyle(
                         color: AppTheme.muted,
                         fontSize: 15,
                         letterSpacing: 0.4,
@@ -154,9 +158,9 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                   color: AppTheme.accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Text(
-                  'Voice Call',
-                  style: TextStyle(
+                child: Text(
+                  info.isVideo ? 'Video Call' : 'Voice Call',
+                  style: const TextStyle(
                     color: AppTheme.accent,
                     fontSize: 13,
                     fontWeight: FontWeight.w500,

@@ -9,7 +9,8 @@ import '../../../services/webrtc_service.dart';
 
 class OutgoingCallScreen extends StatefulWidget {
   final Contact contact;
-  const OutgoingCallScreen({super.key, required this.contact});
+  final bool isVideo;
+  const OutgoingCallScreen({super.key, required this.contact, this.isVideo = false});
   @override
   State<OutgoingCallScreen> createState() => _OutgoingCallScreenState();
 }
@@ -40,6 +41,7 @@ class _OutgoingCallScreenState extends State<OutgoingCallScreen>
       context.read<CallProvider>().startCall(
             targetVirtualId: widget.contact.virtualId,
             targetUsername: widget.contact.username,
+            isVideo: widget.isVideo,
           );
       context.read<CallProvider>().addListener(_onStateChange);
     });
@@ -94,8 +96,11 @@ class _OutgoingCallScreenState extends State<OutgoingCallScreen>
                     padding: const EdgeInsets.only(top: 52),
                     child: Column(
                       children: [
-                        const Icon(Icons.call_rounded,
-                            color: AppTheme.primary, size: 20),
+                        Icon(
+                          widget.isVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                          color: AppTheme.primary,
+                          size: 20,
+                        ),
                         const SizedBox(height: 6),
                         Row(
                           mainAxisSize: MainAxisSize.min,

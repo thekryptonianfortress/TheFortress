@@ -915,7 +915,12 @@ class _ChatScreenState extends State<ChatScreen> {
         IconButton(
           icon: const Icon(Icons.call_rounded, color: AppTheme.onSurface),
           onPressed: () => Navigator.pushNamed(context, '/call/outgoing',
-              arguments: widget.contact),
+              arguments: {'contact': widget.contact, 'isVideo': false}),
+        ),
+        IconButton(
+          icon: const Icon(Icons.videocam_rounded, color: AppTheme.onSurface),
+          onPressed: () => Navigator.pushNamed(context, '/call/outgoing',
+              arguments: {'contact': widget.contact, 'isVideo': true}),
         ),
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert_rounded, color: AppTheme.onSurface),
