@@ -29,6 +29,29 @@ import 'ui/screens/splash_screen.dart';
 // Global navigator key so incoming calls can push from anywhere
 final _navigatorKey = GlobalKey<NavigatorState>();
 
+// Tracks the current top route name so _IncomingCallListener can avoid
+// double-pushing /call/active when IncomingCallScreen already navigated there.
+final _routeTracker = _RouteNameTracker();
+
+class _RouteNameTracker extends NavigatorObserver {
+  String? currentRouteName;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    currentRouteName = route.settings.name;
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    currentRouteName = previousRoute?.settings.name;
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    currentRouteName = newRoute?.settings.name;
+  }
+}
+
 class PagerApp extends StatelessWidget {
   const PagerApp({super.key});
 
@@ -58,6 +81,7 @@ class PagerApp extends StatelessWidget {
       ],
       child: MaterialApp(
         navigatorKey: _navigatorKey,
+        navigatorObservers: [_routeTracker],
         title: 'Pager',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.dark,
@@ -109,24 +133,40 @@ class _IncomingCallListener extends StatefulWidget {
 }
 
 class _IncomingCallListenerState extends State<_IncomingCallListener> {
-  bool _navigating = false;
+  bool _incomingPushed = false;
+  bool _activePushed = false;
 
   @override
   Widget build(BuildContext context) {
     final call = context.watch<CallProvider>();
 
-    if (call.incomingCall != null && !_navigating) {
-      _navigating = true;
+    // ── Incoming call → push /call/incoming ──────────────────────────────────
+    if (call.incomingCall != null && !_incomingPushed) {
+      _incomingPushed = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _navigatorKey.currentState
             ?.pushNamed('/call/incoming')
-            .then((_) => _navigating = false);
+            .then((_) => _incomingPushed = false);
       });
     }
+    if (call.incomingCall == null && _incomingPushed) {
+      _incomingPushed = false;
+    }
 
-    // Reset flag when incoming call is cleared (rejected/answered)
-    if (call.incomingCall == null && _navigating) {
-      _navigating = false;
+    // ── Active call → push /call/active (handles notification-answer path) ──
+    // IncomingCallScreen uses pushReplacementNamed to get to /call/active.
+    // If the user answered via the notification action instead, nobody navigates
+    // there — so we do it here, skipping if /call/active is already on top.
+    if (call.callState == CallState.active && !_activePushed) {
+      _activePushed = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_routeTracker.currentRouteName != '/call/active') {
+          _navigatorKey.currentState?.pushNamed('/call/active');
+        }
+      });
+    }
+    if (call.callState == CallState.idle || call.callState == CallState.ended) {
+      _activePushed = false;
     }
 
     return widget.child;

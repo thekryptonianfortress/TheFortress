@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -138,10 +139,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       final token = await SecureStorage.getToken() ?? '';
       final meta = await MediaService.upload(file, token);
       if (!mounted) return;
+      final replyId = _replyTo?.id;
       await context.read<GroupsProvider>().sendMessage(
         groupId: widget.group.id,
         content: '',
-        replyToId: _replyTo?.id,
+        replyToId: replyId,
         attachmentUrl: meta.url,
         attachmentType: meta.type,
         attachmentName: meta.name,
@@ -175,6 +177,18 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   void _cancelRecording() async {
     await _recorder.stop();
     setState(() => _isRecording = false);
+  }
+
+  /// Called when the user inserts a GIF/image from the keyboard media panel.
+  Future<void> _onKeyboardMediaInserted(KeyboardInsertedContent content) async {
+    final bytes = content.data;
+    if (bytes == null || bytes.isEmpty) return;
+    final ext = content.mimeType.split('/').last;
+    final tmpDir = await getTemporaryDirectory();
+    final tmpFile = File(
+        '${tmpDir.path}/group_kbd_${DateTime.now().millisecondsSinceEpoch}.$ext');
+    await tmpFile.writeAsBytes(bytes);
+    await _pickAndSend(() async => tmpFile);
   }
 
   void _showVoicePreview(String path) {
@@ -426,23 +440,26 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                         key: msgKey,
                         children: [
                           if (showDate) _DateSeparator(date: m.createdAt),
-                          _GroupMessageBubble(
-                            message: m,
-                            myId: _myId,
-                            nextAudioSource: nextAudioSource,
-                            replyTo: m.replyToId != null
-                                ? msgs.firstWhere((x) => x.id == m.replyToId,
-                                    orElse: () => m)
-                                : null,
-                            onLongPress: () => _showMessageOptions(m),
-                            onReact: (emoji) => context.read<GroupsProvider>().addReaction(
-                              groupId: widget.group.id,
-                              messageId: m.id,
-                              emoji: emoji,
+                          _SwipeToReply(
+                            onReply: () => setState(() => _replyTo = m),
+                            child: _GroupMessageBubble(
+                              message: m,
+                              myId: _myId,
+                              nextAudioSource: nextAudioSource,
+                              replyTo: m.replyToId != null
+                                  ? msgs.firstWhere((x) => x.id == m.replyToId,
+                                      orElse: () => m)
+                                  : null,
+                              onLongPress: () => _showMessageOptions(m),
+                              onReact: (emoji) => context.read<GroupsProvider>().addReaction(
+                                groupId: widget.group.id,
+                                messageId: m.id,
+                                emoji: emoji,
+                              ),
+                              onReplyTap: m.replyToId != null
+                                  ? () => _scrollToMessage(m.replyToId!)
+                                  : null,
                             ),
-                            onReplyTap: m.replyToId != null
-                                ? () => _scrollToMessage(m.replyToId!)
-                                : null,
                           ),
                         ],
                       );
@@ -549,6 +566,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                         fillColor: AppTheme.surface,
                         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                      ),
+                      contentInsertionConfiguration: ContentInsertionConfiguration(
+                        allowedMimeTypes: const [
+                          'image/gif',
+                          'image/png',
+                          'image/jpeg',
+                          'image/webp',
+                        ],
+                        onContentInserted: _onKeyboardMediaInserted,
                       ),
                     ),
                   ),
@@ -1186,6 +1212,109 @@ class _VoicePreviewSheetState extends State<_VoicePreviewSheet> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Swipe-to-reply wrapper ────────────────────────────────────
+
+class _SwipeToReply extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onReply;
+
+  const _SwipeToReply({required this.child, required this.onReply});
+
+  @override
+  State<_SwipeToReply> createState() => _SwipeToReplyState();
+}
+
+class _SwipeToReplyState extends State<_SwipeToReply>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _snapBack;
+  late Animation<double> _snapAnim;
+  double _dragX = 0;
+  bool _triggered = false;
+
+  static const _threshold = 56.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _snapBack = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 200));
+    _snapAnim = Tween<double>(begin: 0, end: 0).animate(_snapBack);
+  }
+
+  @override
+  void dispose() {
+    _snapBack.dispose();
+    super.dispose();
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    final delta = d.delta.dx;
+    if (delta < 0 && _dragX <= 0) return; // don't allow left swipe
+    final next = (_dragX + delta).clamp(0.0, _threshold * 1.1);
+    setState(() => _dragX = next);
+    if (!_triggered && _dragX >= _threshold) {
+      _triggered = true;
+      HapticFeedback.lightImpact();
+      widget.onReply();
+    }
+  }
+
+  void _onDragEnd(DragEndDetails _) {
+    final start = _dragX;
+    _snapAnim = Tween<double>(begin: start, end: 0)
+        .animate(CurvedAnimation(parent: _snapBack, curve: Curves.easeOut));
+    _snapBack.forward(from: 0).then((_) {
+      if (mounted) setState(() { _dragX = 0; _triggered = false; });
+    });
+    _snapBack.addListener(() {
+      if (mounted) setState(() => _dragX = _snapAnim.value);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = (_dragX / _threshold).clamp(0.0, 1.0);
+    return GestureDetector(
+      onHorizontalDragUpdate: _onDragUpdate,
+      onHorizontalDragEnd: _onDragEnd,
+      behavior: HitTestBehavior.translucent,
+      child: Stack(
+        children: [
+          // Reply icon revealed on the left as user swipes right
+          if (_dragX > 4)
+            Positioned(
+              left: math.max(0, _dragX - 40),
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: Opacity(
+                  opacity: progress,
+                  child: Transform.scale(
+                    scale: 0.6 + progress * 0.4,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.reply_rounded,
+                          color: AppTheme.primary, size: 18),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          Transform.translate(
+            offset: Offset(_dragX, 0),
+            child: widget.child,
+          ),
+        ],
       ),
     );
   }
