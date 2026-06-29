@@ -10,11 +10,15 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme.dart';
 import '../../../data/local/secure_storage.dart';
+import '../../../data/models/contact.dart';
 import '../../../data/models/group.dart';
 import '../../../data/models/group_message.dart';
+import '../../../providers/contacts_provider.dart';
 import '../../../providers/groups_provider.dart';
+import '../../../providers/messages_provider.dart';
 import '../../../services/media_service.dart';
 import '../../widgets/link_preview_card.dart';
 import '../../widgets/link_text.dart';
@@ -40,11 +44,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   bool _hasText = false;
   bool _isRecording = false;
   bool _uploading = false;
+  bool _isMuted = false;
   GroupMessage? _replyTo;
   GroupMessage? _editingMsg;
   DateTime? _lastTypingSent;
   String _myId = '';
   Timer? _pollTimer;
+  Timer? _highlightTimer;
+  String? _highlightedMessageId;
   int _prevMsgCount = 0;
   final Map<String, GlobalKey> _msgKeys = {};
 
@@ -61,6 +68,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     provider.setActiveGroup(widget.group.id);
     await provider.loadMessagesFromDb(widget.group.id);
     await provider.loadMessages(widget.group.id);
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() => _isMuted = prefs.getBool('muted_group_${widget.group.id}') ?? false);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     // Poll every 30s as fallback
     _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -75,6 +86,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _scrollCtrl.dispose();
     _recorder.dispose();
     _pollTimer?.cancel();
+    _highlightTimer?.cancel();
     super.dispose();
   }
 
@@ -86,6 +98,41 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       duration: const Duration(milliseconds: 400),
       curve: Curves.easeOut,
       alignment: 0.5,
+    );
+    setState(() => _highlightedMessageId = messageId);
+    _highlightTimer?.cancel();
+    _highlightTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _highlightedMessageId = null);
+    });
+  }
+
+  Future<void> _toggleMute() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() => _isMuted = !_isMuted);
+    await prefs.setBool('muted_group_${widget.group.id}', _isMuted);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_isMuted ? 'Notifications muted' : 'Notifications unmuted')),
+      );
+    }
+  }
+
+  void _showForwardPicker(GroupMessage m) {
+    final content = m.isDeleted ? '' : m.content;
+    final hasAttachment = m.attachmentUrl != null && !m.isDeleted;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => _ForwardPicker(
+        content: content,
+        attachmentUrl: hasAttachment ? m.attachmentUrl : null,
+        attachmentType: hasAttachment ? m.attachmentType : null,
+        attachmentName: hasAttachment ? m.attachmentName : null,
+        attachmentSize: hasAttachment ? m.attachmentSize : null,
+      ),
     );
   }
 
@@ -315,6 +362,12 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               title: const Text('Reply'),
               onTap: () { Navigator.pop(ctx); setState(() => _replyTo = m); },
             ),
+            if (!m.isDeleted)
+              ListTile(
+                leading: const Icon(Icons.forward_rounded, color: AppTheme.muted),
+                title: const Text('Forward'),
+                onTap: () { Navigator.pop(ctx); _showForwardPicker(m); },
+              ),
             ListTile(
               leading: const Icon(Icons.copy_rounded, color: AppTheme.muted),
               title: const Text('Copy'),
@@ -434,6 +487,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               ],
             ),
           IconButton(
+            icon: Icon(
+              _isMuted ? Icons.notifications_off_rounded : Icons.notifications_rounded,
+              color: _isMuted ? AppTheme.muted : AppTheme.onSurface,
+            ),
+            tooltip: _isMuted ? 'Unmute' : 'Mute notifications',
+            onPressed: _toggleMute,
+          ),
+          IconButton(
             icon: const Icon(Icons.info_outline_rounded, color: AppTheme.onSurface),
             onPressed: () => Navigator.push(
               context,
@@ -481,6 +542,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                             child: _GroupMessageBubble(
                               message: m,
                               myId: _myId,
+                              highlighted: _highlightedMessageId == m.id,
                               nextAudioSource: nextAudioSource,
                               replyTo: m.replyToId != null
                                   ? msgs.firstWhere((x) => x.id == m.replyToId,
@@ -680,6 +742,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
 class _GroupMessageBubble extends StatelessWidget {
   final GroupMessage message;
   final String myId;
+  final bool highlighted;
   final String? nextAudioSource;
   final GroupMessage? replyTo;
   final VoidCallback onLongPress;
@@ -689,6 +752,7 @@ class _GroupMessageBubble extends StatelessWidget {
   const _GroupMessageBubble({
     required this.message,
     required this.myId,
+    this.highlighted = false,
     this.nextAudioSource,
     this.replyTo,
     required this.onLongPress,
@@ -752,7 +816,10 @@ class _GroupMessageBubble extends StatelessWidget {
     final time = DateFormat('HH:mm').format(message.createdAt.toLocal());
     final metaColor = Colors.white.withValues(alpha: isMe ? 0.6 : 0.45);
 
-    return GestureDetector(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 350),
+      color: highlighted ? Colors.amber.withValues(alpha: 0.15) : Colors.transparent,
+      child: GestureDetector(
       onLongPress: onLongPress,
       onDoubleTap: () => _showEmojiPicker(context),
       child: Padding(
@@ -879,7 +946,8 @@ class _GroupMessageBubble extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ),   // GestureDetector
+    );   // AnimatedContainer
   }
 
   Widget _buildContent(BuildContext context, String time, Color metaColor, bool isMe) {
@@ -1358,6 +1426,196 @@ class _SwipeToReplyState extends State<_SwipeToReply>
             child: widget.child,
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Forward picker ───────────────────────────────────────────
+
+class _ForwardPicker extends StatefulWidget {
+  final String content;
+  final String? attachmentUrl;
+  final String? attachmentType;
+  final String? attachmentName;
+  final int? attachmentSize;
+
+  const _ForwardPicker({
+    required this.content,
+    this.attachmentUrl,
+    this.attachmentType,
+    this.attachmentName,
+    this.attachmentSize,
+  });
+
+  @override
+  State<_ForwardPicker> createState() => _ForwardPickerState();
+}
+
+class _ForwardPickerState extends State<_ForwardPicker>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tab;
+
+  @override
+  void initState() {
+    super.initState();
+    _tab = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tab.dispose();
+    super.dispose();
+  }
+
+  Future<void> _forwardToDm(Contact contact) async {
+    Navigator.pop(context);
+    try {
+      await context.read<MessagesProvider>().sendMessage(
+        recipientId: contact.contactId,
+        recipientVirtualId: contact.virtualId,
+        recipientPublicKey: contact.publicKey,
+        plaintext: widget.content,
+        attachmentUrl: widget.attachmentUrl,
+        attachmentType: widget.attachmentType,
+        attachmentName: widget.attachmentName,
+        attachmentSize: widget.attachmentSize,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Forwarded to ${contact.username}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to forward: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _forwardToGroup(Group group) async {
+    Navigator.pop(context);
+    try {
+      await context.read<GroupsProvider>().sendMessage(
+        groupId: group.id,
+        content: widget.content,
+        attachmentUrl: widget.attachmentUrl,
+        attachmentType: widget.attachmentType,
+        attachmentName: widget.attachmentName,
+        attachmentSize: widget.attachmentSize,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Forwarded to ${group.name}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to forward: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final contacts = context.watch<ContactsProvider>().contacts;
+    final groups = context.watch<GroupsProvider>().groups;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.6,
+      minChildSize: 0.4,
+      maxChildSize: 0.85,
+      expand: false,
+      builder: (_, scrollCtrl) => Container(
+        decoration: const BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 36, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                  color: AppTheme.muted.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            const Text('Forward to',
+                style: TextStyle(
+                    color: AppTheme.onSurface,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            TabBar(
+              controller: _tab,
+              indicatorColor: AppTheme.primary,
+              labelColor: AppTheme.primary,
+              unselectedLabelColor: AppTheme.muted,
+              tabs: const [Tab(text: 'People'), Tab(text: 'Groups')],
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: _tab,
+                children: [
+                  // People tab
+                  contacts.isEmpty
+                      ? const Center(
+                          child: Text('No contacts',
+                              style: TextStyle(color: AppTheme.muted)))
+                      : ListView.builder(
+                          controller: scrollCtrl,
+                          itemCount: contacts.length,
+                          itemBuilder: (_, i) {
+                            final c = contacts[i];
+                            return ListTile(
+                              leading: UserAvatar(
+                                  username: c.username,
+                                  avatarUrl: c.avatarUrl,
+                                  radius: 20),
+                              title: Text(c.username,
+                                  style: const TextStyle(
+                                      color: AppTheme.onSurface)),
+                              subtitle: Text(c.virtualId,
+                                  style: const TextStyle(
+                                      color: AppTheme.muted, fontSize: 12)),
+                              onTap: () => _forwardToDm(c),
+                            );
+                          },
+                        ),
+                  // Groups tab
+                  groups.isEmpty
+                      ? const Center(
+                          child: Text('No groups',
+                              style: TextStyle(color: AppTheme.muted)))
+                      : ListView.builder(
+                          controller: scrollCtrl,
+                          itemCount: groups.length,
+                          itemBuilder: (_, i) {
+                            final g = groups[i];
+                            return ListTile(
+                              leading: UserAvatar(
+                                  username: g.name,
+                                  avatarUrl: g.avatarUrl,
+                                  radius: 20),
+                              title: Text(g.name,
+                                  style: const TextStyle(
+                                      color: AppTheme.onSurface)),
+                              subtitle: Text('${g.memberCount} members',
+                                  style: const TextStyle(
+                                      color: AppTheme.muted, fontSize: 12)),
+                              onTap: () => _forwardToGroup(g),
+                            );
+                          },
+                        ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
