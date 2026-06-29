@@ -10,6 +10,7 @@ import '../../data/models/message.dart';
 import '../../services/media_service.dart';
 import '../screens/media/photo_view_screen.dart';
 import '../screens/media/video_player_screen.dart';
+import 'link_preview_card.dart';
 import 'link_text.dart';
 import 'voice_note_player.dart';
 
@@ -365,7 +366,7 @@ class _MessageBubbleState extends State<MessageBubble>
                 bottom: -13,
                 right: isMe ? 6 : null,
                 left: isMe ? null : 6,
-                child: _buildReactionPills(context, reactions, isMe),
+                child: _buildReactionPills(context, reactions, isMe, bubbleColor),
               ),
           ],
         ),
@@ -377,38 +378,43 @@ class _MessageBubbleState extends State<MessageBubble>
     BuildContext context,
     Map<String, List<String>> reactions,
     bool isMe,
+    Color bubbleColor,
   ) {
     return Wrap(
-      spacing: 4,
+      spacing: 3,
       children: reactions.entries.map((e) {
         final count = e.value.length;
         final iMine = e.value.contains(widget.myUserId);
+        // Blend a highlight over the bubble's own color so pills look like
+        // they grew naturally out of the bubble — no harsh border.
+        final pillColor = iMine
+            ? Color.alphaBlend(
+                AppTheme.primary.withValues(alpha: 0.45), bubbleColor)
+            : Color.alphaBlend(
+                Colors.white.withValues(alpha: 0.12), bubbleColor);
         return GestureDetector(
           onTap: () => _showWhoReacted(context, e.key, e.value),
           child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
             decoration: BoxDecoration(
-              color: iMine
-                  ? AppTheme.primary.withValues(alpha: 0.3)
-                  : const Color(0xFF2A3A4A),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: iMine
-                    ? AppTheme.primary
-                    : Colors.white.withValues(alpha: 0.15),
-                width: 1,
-              ),
+              color: pillColor,
+              borderRadius: BorderRadius.circular(10),
               boxShadow: const [
                 BoxShadow(
-                    color: Colors.black38,
-                    blurRadius: 4,
-                    offset: Offset(0, 1)),
+                    color: Colors.black45,
+                    blurRadius: 5,
+                    offset: Offset(0, 2)),
               ],
             ),
             child: Text(
               count > 1 ? '${e.key} $count' : e.key,
-              style: const TextStyle(fontSize: 13),
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.2,
+                color: iMine
+                    ? Colors.white
+                    : Colors.white.withValues(alpha: 0.9),
+              ),
             ),
           ),
         );
@@ -559,6 +565,13 @@ class _MessageBubbleState extends State<MessageBubble>
 
     final hasText = text.trim().isNotEmpty;
 
+    // Detect first URL in message text for inline link preview
+    final _urlRe = RegExp(
+      r'(https?://[^\s]+|www\.[a-zA-Z0-9\-]+\.[^\s]+)',
+      caseSensitive: false,
+    );
+    final firstUrl = hasText ? _urlRe.firstMatch(text)?.group(0) : null;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       mainAxisSize: MainAxisSize.min,
@@ -576,6 +589,10 @@ class _MessageBubbleState extends State<MessageBubble>
               height: 1.35,
             ),
           ),
+        if (firstUrl != null) ...[
+          const SizedBox(height: 6),
+          LinkPreviewCard(firstUrl),
+        ],
         const SizedBox(height: 2),
         Row(
           mainAxisSize: MainAxisSize.min,

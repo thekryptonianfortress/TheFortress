@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
 import '../../../providers/call_provider.dart';
 import '../../../providers/contacts_provider.dart';
+import '../../../services/webrtc_service.dart' show CallState;
 import '../../widgets/user_avatar.dart';
 
 class IncomingCallScreen extends StatefulWidget {
@@ -50,9 +51,15 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
     final info = call.incomingCall;
 
     if (info == null && !_answering) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.of(context).maybePop();
-      });
+      final state = call.callState;
+      // Notification "Answer" path: answerCall() sets callState=active before
+      // clearing incomingCall. Don't pop when call is active — _IncomingCallListener
+      // will push /call/active on top of us.
+      if (state != CallState.active) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) Navigator.of(context).maybePop();
+        });
+      }
       return const Scaffold(backgroundColor: Color(0xFF0D1117));
     }
 

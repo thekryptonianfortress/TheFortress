@@ -22,6 +22,32 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 /// Handles local notification actions when the app is backgrounded/killed.
 @pragma('vm:entry-point')
 void notificationBackgroundHandler(NotificationResponse response) async {
+  if (response.actionId == 'reject') {
+    // Reject an incoming call via HTTP (no socket available in background isolate)
+    final payload = response.payload ?? '';
+    String callId = '';
+    try {
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      callId = data['call_id'] as String? ?? '';
+    } catch (_) {}
+    if (callId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('pager_auth_token');
+      final serverUrl = prefs.getString('pager_server_url') ?? 'http://137.184.168.242:4000';
+      if (token == null || token.isEmpty) return;
+      final client = HttpClient();
+      final req = await client.postUrl(Uri.parse('$serverUrl/calls/reject'));
+      req.headers.set('Content-Type', 'application/json');
+      req.headers.set('Authorization', 'Bearer $token');
+      req.write(jsonEncode({'call_id': callId}));
+      final res = await req.close();
+      await res.drain<void>();
+      client.close();
+    } catch (_) {}
+    return;
+  }
+
   if (response.actionId != 'msg_reply') return;
 
   final replyText = response.input?.trim() ?? '';
