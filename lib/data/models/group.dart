@@ -55,6 +55,9 @@ class Group {
   final DateTime? lastMessageAt;
   final List<GroupMember> members;
   final String? themeId;
+  final String? pinnedMessageId;
+  final String? pinnedMessageContent;
+  final String? pinnedMessageType;
 
   const Group({
     required this.id,
@@ -71,6 +74,9 @@ class Group {
     this.lastMessageAt,
     this.members = const [],
     this.themeId,
+    this.pinnedMessageId,
+    this.pinnedMessageContent,
+    this.pinnedMessageType,
   });
 
   bool get isAdmin => myRole == 'admin';
@@ -85,6 +91,9 @@ class Group {
     DateTime? lastMessageAt,
     List<GroupMember>? members,
     String? themeId,
+    Object? pinnedMessageId = _sentinel,
+    Object? pinnedMessageContent = _sentinel,
+    Object? pinnedMessageType = _sentinel,
   }) =>
       Group(
         id: id,
@@ -101,7 +110,12 @@ class Group {
         lastMessageAt: lastMessageAt ?? this.lastMessageAt,
         members: members ?? this.members,
         themeId: themeId ?? this.themeId,
+        pinnedMessageId: pinnedMessageId == _sentinel ? this.pinnedMessageId : pinnedMessageId as String?,
+        pinnedMessageContent: pinnedMessageContent == _sentinel ? this.pinnedMessageContent : pinnedMessageContent as String?,
+        pinnedMessageType: pinnedMessageType == _sentinel ? this.pinnedMessageType : pinnedMessageType as String?,
       );
+
+static const Object _sentinel = Object();
 
   Map<String, dynamic> toDbMap() => {
         'id': id,
@@ -135,28 +149,37 @@ class Group {
             ? DateTime.tryParse(m['last_message_at'] as String)
             : null,
         themeId: m['theme_id'] as String?,
+        pinnedMessageId: m['pinned_message_id'] as String?,
+        pinnedMessageContent: m['pinned_message_content'] as String?,
+        pinnedMessageType: m['pinned_message_type'] as String?,
       );
 
-  factory Group.fromJson(Map<String, dynamic> j) => Group(
-        id: j['id'] as String,
-        name: j['name'] as String,
-        description: j['description'] as String?,
-        avatarUrl: j['avatar_url'] as String?,
-        joinCode: j['join_code'] as String,
-        createdBy: j['created_by'] as String,
-        createdAt: DateTime.parse(j['created_at'] as String),
-        myRole: j['my_role'] as String? ?? 'member',
-        memberCount: int.tryParse('${j['member_count'] ?? 1}') ?? 1,
-        pendingCount: int.tryParse('${j['pending_count'] ?? 0}') ?? 0,
-        lastMessage: j['last_message'] as String?,
-        lastMessageAt: j['last_message_at'] != null
-            ? DateTime.tryParse(j['last_message_at'] as String)
-            : null,
-        themeId: j['theme_id'] as String?,
-        members: j['members'] != null
-            ? (j['members'] as List)
-                .map((m) => GroupMember.fromJson(Map<String, dynamic>.from(m as Map)))
-                .toList()
-            : [],
-      );
+  factory Group.fromJson(Map<String, dynamic> j) {
+    final pm = j['pinned_message'] as Map<String, dynamic>?;
+    return Group(
+      id: j['id'] as String,
+      name: j['name'] as String,
+      description: j['description'] as String?,
+      avatarUrl: j['avatar_url'] as String?,
+      joinCode: j['join_code'] as String,
+      createdBy: j['created_by'] as String,
+      createdAt: DateTime.parse(j['created_at'] as String),
+      myRole: j['my_role'] as String? ?? 'member',
+      memberCount: int.tryParse('${j['member_count'] ?? 1}') ?? 1,
+      pendingCount: int.tryParse('${j['pending_count'] ?? 0}') ?? 0,
+      lastMessage: j['last_message'] as String?,
+      lastMessageAt: j['last_message_at'] != null
+          ? DateTime.tryParse(j['last_message_at'] as String)
+          : null,
+      themeId: j['theme_id'] as String?,
+      pinnedMessageId: pm?['id'] as String? ?? j['pinned_message_id'] as String?,
+      pinnedMessageContent: pm?['content'] as String?,
+      pinnedMessageType: pm?['attachment_type'] as String?,
+      members: j['members'] != null
+          ? (j['members'] as List)
+              .map((m) => GroupMember.fromJson(Map<String, dynamic>.from(m as Map)))
+              .toList()
+          : [],
+    );
+  }
 }

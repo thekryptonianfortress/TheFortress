@@ -202,6 +202,18 @@ class GroupsProvider extends ChangeNotifier {
           }
           notifyListeners();
 
+        case SignalingEvent.groupPinChanged:
+          final gid = msg.data['group_id'] as String;
+          if (_groups.containsKey(gid)) {
+            final pm = msg.data['pinned_message'] as Map<String, dynamic>?;
+            _groups[gid] = _groups[gid]!.copyWith(
+              pinnedMessageId: pm?['id'] as String?,
+              pinnedMessageContent: pm?['content'] as String?,
+              pinnedMessageType: pm?['attachment_type'] as String?,
+            );
+            notifyListeners();
+          }
+
         default:
           break;
       }
@@ -527,6 +539,31 @@ class GroupsProvider extends ChangeNotifier {
       _groups[groupId] = _groups[groupId]!.copyWith(lastMessage: '', lastMessageAt: null);
     }
     notifyListeners();
+  }
+
+  Future<void> pinMessage(String groupId, String messageId) async {
+    final result = await _service.pinMessage(groupId, messageId);
+    if (_groups.containsKey(groupId)) {
+      final pm = result['pinned_message'] as Map<String, dynamic>?;
+      _groups[groupId] = _groups[groupId]!.copyWith(
+        pinnedMessageId: pm?['id'] as String?,
+        pinnedMessageContent: pm?['content'] as String?,
+        pinnedMessageType: pm?['attachment_type'] as String?,
+      );
+      notifyListeners();
+    }
+  }
+
+  Future<void> unpinMessage(String groupId) async {
+    await _service.unpinMessage(groupId);
+    if (_groups.containsKey(groupId)) {
+      _groups[groupId] = _groups[groupId]!.copyWith(
+        pinnedMessageId: null,
+        pinnedMessageContent: null,
+        pinnedMessageType: null,
+      );
+      notifyListeners();
+    }
   }
 
   Future<void> deleteGroup(String groupId) async {

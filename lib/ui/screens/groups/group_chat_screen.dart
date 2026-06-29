@@ -3,8 +3,10 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -52,6 +54,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   Timer? _pollTimer;
   Timer? _highlightTimer;
   String? _highlightedMessageId;
+  String? _mentionQuery;
+  List<GroupMember> _mentionSuggestions = [];
   int _prevMsgCount = 0;
   final Map<String, GlobalKey> _msgKeys = {};
 
@@ -147,7 +151,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   }
 
   void _onTextChanged() {
-    final hasText = _ctrl.text.trim().isNotEmpty;
+    final text = _ctrl.text;
+    final hasText = text.trim().isNotEmpty;
     if (hasText != _hasText) setState(() => _hasText = hasText);
     // Typing indicator throttle
     final now = DateTime.now();
@@ -155,6 +160,39 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       _lastTypingSent = now;
       context.read<GroupsProvider>().sendTyping(widget.group.id);
     }
+    // @mention detection
+    final sel = _ctrl.selection;
+    if (sel.isValid && sel.isCollapsed) {
+      final before = text.substring(0, sel.start);
+      final atIdx = before.lastIndexOf('@');
+      if (atIdx >= 0) {
+        final query = before.substring(atIdx + 1);
+        if (!query.contains(' ') && !query.contains('\n')) {
+          final members = context.read<GroupsProvider>()
+              .groupById(widget.group.id)
+              ?.members
+              .where((m) => m.isActive && m.username.toLowerCase().startsWith(query.toLowerCase()))
+              .toList() ?? [];
+          setState(() { _mentionQuery = query; _mentionSuggestions = members; });
+          return;
+        }
+      }
+    }
+    if (_mentionQuery != null) setState(() { _mentionQuery = null; _mentionSuggestions = []; });
+  }
+
+  void _insertMention(GroupMember member) {
+    final text = _ctrl.text;
+    final pos = _ctrl.selection.start;
+    final before = text.substring(0, pos);
+    final atIdx = before.lastIndexOf('@');
+    if (atIdx < 0) return;
+    final after = text.substring(pos);
+    final newText = '${text.substring(0, atIdx)}@${member.username} $after';
+    _ctrl.text = newText;
+    _ctrl.selection = TextSelection.fromPosition(
+        TextPosition(offset: atIdx + member.username.length + 2));
+    setState(() { _mentionQuery = null; _mentionSuggestions = []; });
   }
 
   Future<void> _sendText() async {
@@ -368,6 +406,15 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 title: const Text('Forward'),
                 onTap: () { Navigator.pop(ctx); _showForwardPicker(m); },
               ),
+            if (isAdmin && !m.isDeleted)
+              ListTile(
+                leading: const Icon(Icons.push_pin_rounded, color: AppTheme.muted),
+                title: const Text('Pin message'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  context.read<GroupsProvider>().pinMessage(widget.group.id, m.id);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.copy_rounded, color: AppTheme.muted),
               title: const Text('Copy'),
@@ -507,6 +554,17 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         children: [
           Positioned.fill(child: GroupChatBackground(themeId: group.themeId)),
           Column(children: [
+          // Pinned message banner
+          if (group.pinnedMessageId != null)
+            _PinnedBanner(
+              content: group.pinnedMessageContent ?? '',
+              attachmentType: group.pinnedMessageType,
+              isAdmin: group.isAdmin,
+              onTap: () => _scrollToMessage(group.pinnedMessageId!),
+              onUnpin: group.isAdmin
+                  ? () => context.read<GroupsProvider>().unpinMessage(widget.group.id)
+                  : null,
+            ),
           // Chat messages
           Expanded(
             child: msgs.isEmpty
@@ -566,6 +624,9 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           ),
           if (_uploading)
             const LinearProgressIndicator(color: AppTheme.primary, backgroundColor: Colors.transparent),
+          // @mention suggestions
+          if (_mentionSuggestions.isNotEmpty)
+            _buildMentionSuggestions(),
           // Reply bar
           if (_replyTo != null) _buildReplyBar(),
           if (_editingMsg != null) _buildEditBar(),
@@ -633,6 +694,27 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           IconButton(icon: const Icon(Icons.close_rounded, color: AppTheme.muted, size: 20),
               onPressed: () { setState(() { _editingMsg = null; _ctrl.clear(); }); }),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMentionSuggestions() {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 180),
+      color: AppTheme.inputBg,
+      child: ListView.builder(
+        shrinkWrap: true,
+        itemCount: _mentionSuggestions.length,
+        itemBuilder: (_, i) {
+          final m = _mentionSuggestions[i];
+          return ListTile(
+            dense: true,
+            leading: UserAvatar(username: m.username, avatarUrl: m.avatarUrl, radius: 16),
+            title: Text('@${m.username}',
+                style: const TextStyle(color: AppTheme.onSurface, fontSize: 14)),
+            onTap: () => _insertMention(m),
+          );
+        },
       ),
     );
   }
@@ -1030,7 +1112,7 @@ class _GroupMessageBubble extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (attachmentWidget != null) ...[attachmentWidget, if (hasText) const SizedBox(height: 6)],
-        if (hasText) LinkText(m.content, style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.35)),
+        if (hasText) _MentionLinkText(m.content, style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.35)),
         if (firstUrl != null) ...[const SizedBox(height: 6), LinkPreviewCard(firstUrl)],
         const SizedBox(height: 2),
         Row(
@@ -1431,6 +1513,71 @@ class _SwipeToReplyState extends State<_SwipeToReply>
   }
 }
 
+// ── Pinned message banner ─────────────────────────────────────
+
+class _PinnedBanner extends StatelessWidget {
+  final String content;
+  final String? attachmentType;
+  final bool isAdmin;
+  final VoidCallback onTap;
+  final VoidCallback? onUnpin;
+
+  const _PinnedBanner({
+    required this.content,
+    this.attachmentType,
+    required this.isAdmin,
+    required this.onTap,
+    this.onUnpin,
+  });
+
+  String get _preview {
+    if (content.isNotEmpty) return content;
+    if (attachmentType == 'image') return '📷 Photo';
+    if (attachmentType == 'video') return '🎥 Video';
+    if (attachmentType == 'audio') return '🎤 Voice note';
+    return '📎 Attachment';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        color: AppTheme.inputBg,
+        padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+        child: Row(
+          children: [
+            Container(width: 3, height: 32, color: AppTheme.primary,
+                margin: const EdgeInsets.only(right: 10)),
+            const Icon(Icons.push_pin_rounded, color: AppTheme.primary, size: 14),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Pinned Message',
+                      style: TextStyle(color: AppTheme.primary, fontSize: 11,
+                          fontWeight: FontWeight.w700)),
+                  Text(_preview,
+                      style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            if (onUnpin != null)
+              IconButton(
+                icon: const Icon(Icons.close_rounded, color: AppTheme.muted, size: 18),
+                onPressed: onUnpin,
+                tooltip: 'Unpin',
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ── Forward picker ───────────────────────────────────────────
 
 class _ForwardPicker extends StatefulWidget {
@@ -1618,5 +1765,63 @@ class _ForwardPickerState extends State<_ForwardPicker>
         ),
       ),
     );
+  }
+}
+
+// ── Mention + Link text ───────────────────────────────────────
+// Renders @mentions in primary blue and URLs as tappable links.
+
+class _MentionLinkText extends StatelessWidget {
+  final String text;
+  final TextStyle? style;
+
+  static final _tokenRe = RegExp(
+    r'(@\w+)|(https?://[^\s]+|www\.[a-zA-Z0-9\-]+\.[^\s]+)',
+    caseSensitive: false,
+  );
+
+  const _MentionLinkText(this.text, {this.style});
+
+  Future<void> _launch(String raw) async {
+    final url = raw.startsWith('http') ? raw : 'https://$raw';
+    final uri = Uri.tryParse(url);
+    if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final base = style ?? const TextStyle(color: Colors.white, fontSize: 15, height: 1.35);
+    final matches = _tokenRe.allMatches(text).toList();
+    if (matches.isEmpty) return Text(text, style: base);
+
+    final spans = <InlineSpan>[];
+    int cursor = 0;
+    for (final m in matches) {
+      if (m.start > cursor) {
+        spans.add(TextSpan(text: text.substring(cursor, m.start)));
+      }
+      final token = m.group(0)!;
+      if (token.startsWith('@')) {
+        spans.add(TextSpan(
+          text: token,
+          style: base.copyWith(color: AppTheme.primary, fontWeight: FontWeight.w600),
+        ));
+      } else {
+        spans.add(TextSpan(
+          text: token,
+          style: base.copyWith(
+            color: const Color(0xFF7AB8F5),
+            decoration: TextDecoration.underline,
+            decorationColor: const Color(0xFF7AB8F5),
+          ),
+          recognizer: TapGestureRecognizer()..onTap = () => _launch(token),
+        ));
+      }
+      cursor = m.end;
+    }
+    if (cursor < text.length) {
+      spans.add(TextSpan(text: text.substring(cursor)));
+    }
+    return RichText(text: TextSpan(style: base, children: spans));
   }
 }

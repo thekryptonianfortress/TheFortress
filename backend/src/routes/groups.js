@@ -23,6 +23,7 @@ const router = express.Router();
       )
     `);
     await db.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS theme_id TEXT DEFAULT 'midnight'`);
+    await db.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS pinned_message_id UUID`);
     await db.query(`
       CREATE TABLE IF NOT EXISTS group_members (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -189,11 +190,21 @@ router.get('/:id', authenticate, async (req, res) => {
       [id]
     );
 
+    let pinnedMessage = null;
+    if (groupRes.rows[0].pinned_message_id) {
+      const pmRes = await db.query(
+        'SELECT id, content, attachment_type, attachment_name FROM group_messages WHERE id = $1 AND is_deleted = false',
+        [groupRes.rows[0].pinned_message_id]
+      );
+      if (pmRes.rows.length > 0) pinnedMessage = pmRes.rows[0];
+    }
+
     res.json({
       ...groupRes.rows[0],
       my_role: memberCheck.rows[0].role,
       my_status: memberCheck.rows[0].status,
       members: membersRes.rows,
+      pinned_message: pinnedMessage,
     });
   } catch (err) {
     console.error('[groups GET /:id]', err.message);
@@ -458,6 +469,45 @@ router.put('/:id', authenticate, async (req, res) => {
   } catch (err) {
     console.error('[groups PUT /:id]', err.message);
     res.status(500).json({ error: 'Failed to update group' });
+  }
+});
+
+// PUT /groups/:id/pin — pin a message (admin only)
+router.put('/:id/pin', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message_id } = req.body;
+    if (!message_id) return res.status(400).json({ error: 'message_id required' });
+    if (!await isAdmin(id, req.userId)) return res.status(403).json({ error: 'Admin only' });
+
+    const msgRes = await db.query(
+      'SELECT id, content, attachment_type, attachment_name FROM group_messages WHERE id = $1 AND group_id = $2 AND is_deleted = false',
+      [message_id, id]
+    );
+    if (msgRes.rows.length === 0) return res.status(404).json({ error: 'Message not found' });
+
+    await db.query('UPDATE groups SET pinned_message_id = $1 WHERE id = $2', [message_id, id]);
+    const pinned = msgRes.rows[0];
+    await notifyMembers(id, 'group-pin-changed', { group_id: id, pinned_message: pinned });
+    res.json({ ok: true, pinned_message: pinned });
+  } catch (err) {
+    console.error('[groups PUT /:id/pin]', err.message);
+    res.status(500).json({ error: 'Failed to pin message' });
+  }
+});
+
+// DELETE /groups/:id/pin — unpin (admin only)
+router.delete('/:id/pin', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!await isAdmin(id, req.userId)) return res.status(403).json({ error: 'Admin only' });
+
+    await db.query('UPDATE groups SET pinned_message_id = NULL WHERE id = $1', [id]);
+    await notifyMembers(id, 'group-pin-changed', { group_id: id, pinned_message: null });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[groups DELETE /:id/pin]', err.message);
+    res.status(500).json({ error: 'Failed to unpin message' });
   }
 });
 

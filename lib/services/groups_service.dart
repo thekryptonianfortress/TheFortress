@@ -127,6 +127,24 @@ class GroupsService {
     if (res.statusCode != 200) throw Exception('Failed to clear messages');
   }
 
+  Future<Map<String, dynamic>> pinMessage(String groupId, String messageId) async {
+    final res = await http.put(
+      Uri.parse('$_base/groups/$groupId/pin'),
+      headers: await _headers(),
+      body: jsonEncode({'message_id': messageId}),
+    );
+    if (res.statusCode != 200) throw Exception('Failed to pin message');
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  Future<void> unpinMessage(String groupId) async {
+    final res = await http.delete(
+      Uri.parse('$_base/groups/$groupId/pin'),
+      headers: await _headers(),
+    );
+    if (res.statusCode != 200) throw Exception('Failed to unpin message');
+  }
+
   Future<void> deleteGroup(String groupId) async {
     final res = await http.delete(
       Uri.parse('$_base/groups/$groupId'),
