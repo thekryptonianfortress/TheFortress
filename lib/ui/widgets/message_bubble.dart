@@ -10,6 +10,7 @@ import '../../data/models/message.dart';
 import '../../services/media_service.dart';
 import '../screens/media/photo_view_screen.dart';
 import '../screens/media/video_player_screen.dart';
+import 'link_text.dart';
 import 'voice_note_player.dart';
 
 class MessageBubble extends StatefulWidget {
@@ -567,7 +568,7 @@ class _MessageBubbleState extends State<MessageBubble>
           if (hasText) const SizedBox(height: 6),
         ],
         if (hasText)
-          Text(
+          LinkText(
             text,
             style: const TextStyle(
               color: Colors.white,

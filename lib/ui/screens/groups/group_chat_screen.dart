@@ -16,6 +16,7 @@ import '../../../data/models/group.dart';
 import '../../../data/models/group_message.dart';
 import '../../../providers/groups_provider.dart';
 import '../../../services/media_service.dart';
+import '../../widgets/link_text.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/voice_note_player.dart';
 import '../media/photo_view_screen.dart';
@@ -920,7 +921,7 @@ class _GroupMessageBubble extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (attachmentWidget != null) ...[attachmentWidget, if (hasText) const SizedBox(height: 6)],
-        if (hasText) Text(m.content, style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.35)),
+        if (hasText) LinkText(m.content, style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.35)),
         const SizedBox(height: 2),
         Row(
           mainAxisSize: MainAxisSize.min,
