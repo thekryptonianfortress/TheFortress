@@ -150,7 +150,9 @@ router.get('/', authenticate, async (req, res) => {
               (SELECT COUNT(*) FROM group_members WHERE group_id = g.id AND status = 'active') AS member_count,
               (SELECT COUNT(*) FROM group_members WHERE group_id = g.id AND status = 'pending') AS pending_count,
               (SELECT content FROM group_messages WHERE group_id = g.id AND is_deleted = false ORDER BY created_at DESC LIMIT 1) AS last_message,
-              (SELECT created_at FROM group_messages WHERE group_id = g.id ORDER BY created_at DESC LIMIT 1) AS last_message_at
+              (SELECT created_at FROM group_messages WHERE group_id = g.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
+              (SELECT content FROM group_messages WHERE id = g.pinned_message_id AND is_deleted = false) AS pinned_message_content,
+              (SELECT attachment_type FROM group_messages WHERE id = g.pinned_message_id AND is_deleted = false) AS pinned_message_attachment_type
        FROM groups g
        JOIN group_members gm ON gm.group_id = g.id
        WHERE gm.user_id = $1 AND gm.status = 'active'

@@ -71,6 +71,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     final provider = context.read<GroupsProvider>();
     provider.setActiveGroup(widget.group.id);
     await provider.loadMessagesFromDb(widget.group.id);
+    // Fetch full group detail: loads members (for @mention) + pinned message content
+    provider.fetchGroupDetail(widget.group.id);
     await provider.loadMessages(widget.group.id);
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
@@ -108,6 +110,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     _highlightTimer = Timer(const Duration(milliseconds: 1500), () {
       if (mounted) setState(() => _highlightedMessageId = null);
     });
+  }
+
+  static String _attachmentLabel(String? type) {
+    switch (type) {
+      case 'image': return '📷 Photo';
+      case 'gif': return '🎞 GIF';
+      case 'video': return '🎥 Video';
+      case 'audio': return '🎤 Voice note';
+      default: return '📎 Attachment';
+    }
   }
 
   Future<void> _toggleMute() async {
@@ -663,7 +675,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
               children: [
                 Text(r.isOutgoing ? 'You' : r.senderUsername,
                     style: const TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w700)),
-                Text(r.isDeleted ? 'Deleted message' : (r.content.isNotEmpty ? r.content : '📎 Attachment'),
+                Text(r.isDeleted ? 'Deleted message' : (r.content.isNotEmpty ? r.content : _attachmentLabel(r.attachmentType)),
                     style: const TextStyle(color: AppTheme.muted, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
               ],
             ),
@@ -816,6 +828,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         ),
       ],
     );
+  }
+}
+
+String _attachmentPreviewLabel(String? type) {
+  switch (type) {
+    case 'image': return '📷 Photo';
+    case 'gif': return '🎞 GIF';
+    case 'video': return '🎥 Video';
+    case 'audio': return '🎤 Voice note';
+    default: return '📎 Attachment';
   }
 }
 
@@ -977,7 +999,7 @@ class _GroupMessageBubble extends StatelessWidget {
                                   const SizedBox(height: 1),
                                   Text(
                                     replyTo!.isDeleted ? 'Deleted message'
-                                        : (replyTo!.content.isNotEmpty ? replyTo!.content : '📎 Attachment'),
+                                        : (replyTo!.content.isNotEmpty ? replyTo!.content : _attachmentPreviewLabel(replyTo!.attachmentType)),
                                     style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 12),
                                     maxLines: 2, overflow: TextOverflow.ellipsis,
                                   ),

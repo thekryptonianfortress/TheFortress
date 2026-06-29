@@ -182,15 +182,26 @@ class _GroupsListScreenState extends State<GroupsListScreen> {
                             ],
                           ),
                           const SizedBox(height: 3),
-                          Text(
-                            g.lastMessage ?? '${g.memberCount} members',
-                            style: TextStyle(
-                              color: unread > 0 ? AppTheme.onSurface : AppTheme.muted,
-                              fontSize: 13,
-                              fontWeight: unread > 0 ? FontWeight.w500 : FontWeight.normal,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          Row(
+                            children: [
+                              if (g.pinnedMessageId != null)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 4),
+                                  child: Icon(Icons.push_pin_rounded, size: 12, color: AppTheme.muted),
+                                ),
+                              Expanded(
+                                child: Text(
+                                  g.lastMessage ?? '${g.memberCount} members',
+                                  style: TextStyle(
+                                    color: unread > 0 ? AppTheme.onSurface : AppTheme.muted,
+                                    fontSize: 13,
+                                    fontWeight: unread > 0 ? FontWeight.w500 : FontWeight.normal,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

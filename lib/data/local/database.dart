@@ -21,7 +21,7 @@ class LocalDatabase {
     final path = join(await getDatabasesPath(), AppConstants.dbName);
     return openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -96,6 +96,11 @@ class LocalDatabase {
           theme_id TEXT
         )
       ''');
+    }
+    if (oldVersion < 9) {
+      await db.execute('ALTER TABLE groups ADD COLUMN pinned_message_id TEXT');
+      await db.execute('ALTER TABLE groups ADD COLUMN pinned_message_content TEXT');
+      await db.execute('ALTER TABLE groups ADD COLUMN pinned_message_type TEXT');
     }
   }
 
@@ -189,7 +194,10 @@ class LocalDatabase {
         pending_count INTEGER NOT NULL DEFAULT 0,
         last_message TEXT,
         last_message_at TEXT,
-        theme_id TEXT
+        theme_id TEXT,
+        pinned_message_id TEXT,
+        pinned_message_content TEXT,
+        pinned_message_type TEXT
       )
     ''');
 

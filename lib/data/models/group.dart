@@ -131,6 +131,9 @@ static const Object _sentinel = Object();
         'last_message': lastMessage,
         'last_message_at': lastMessageAt?.toIso8601String(),
         'theme_id': themeId,
+        'pinned_message_id': pinnedMessageId,
+        'pinned_message_content': pinnedMessageContent,
+        'pinned_message_type': pinnedMessageType,
       };
 
   factory Group.fromDbMap(Map<String, dynamic> m) => Group(
@@ -173,8 +176,8 @@ static const Object _sentinel = Object();
           : null,
       themeId: j['theme_id'] as String?,
       pinnedMessageId: pm?['id'] as String? ?? j['pinned_message_id'] as String?,
-      pinnedMessageContent: pm?['content'] as String?,
-      pinnedMessageType: pm?['attachment_type'] as String?,
+      pinnedMessageContent: pm?['content'] as String? ?? j['pinned_message_content'] as String?,
+      pinnedMessageType: pm?['attachment_type'] as String? ?? j['pinned_message_attachment_type'] as String?,
       members: j['members'] != null
           ? (j['members'] as List)
               .map((m) => GroupMember.fromJson(Map<String, dynamic>.from(m as Map)))

@@ -278,7 +278,13 @@ class GroupsProvider extends ChangeNotifier {
     try {
       final g = await _service.fetchGroup(groupId);
       _groups[g.id] = _groups[g.id] != null
-          ? _groups[g.id]!.copyWith(members: g.members, memberCount: g.memberCount)
+          ? _groups[g.id]!.copyWith(
+              members: g.members,
+              memberCount: g.memberCount,
+              pinnedMessageId: g.pinnedMessageId,
+              pinnedMessageContent: g.pinnedMessageContent,
+              pinnedMessageType: g.pinnedMessageType,
+            )
           : g;
       // Refresh pending requests from members list
       _pendingRequests.removeWhere((r) => r.groupId == groupId);
@@ -598,7 +604,14 @@ class GroupsProvider extends ChangeNotifier {
     try {
       final g = await _service.fetchGroup(groupId);
       _groups[g.id] = _groups[g.id] != null
-          ? _groups[g.id]!.copyWith(members: g.members, memberCount: g.memberCount, pendingCount: g.pendingCount)
+          ? _groups[g.id]!.copyWith(
+              members: g.members,
+              memberCount: g.memberCount,
+              pendingCount: g.pendingCount,
+              pinnedMessageId: g.pinnedMessageId,
+              pinnedMessageContent: g.pinnedMessageContent,
+              pinnedMessageType: g.pinnedMessageType,
+            )
           : g;
       notifyListeners();
       return _groups[g.id];
