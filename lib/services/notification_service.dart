@@ -198,7 +198,7 @@ class NotificationService {
               const AndroidNotificationAction(
                 'reject',
                 'Reject',
-                showsUserInterface: false,
+                showsUserInterface: true,
                 cancelNotification: true,
               ),
             ],

@@ -29,12 +29,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
   List<CallRecord> _callHistory = [];
   CallState? _prevCallState;
+  bool _prevHadIncoming = false;
+  int _unseenMissedCount = 0;
+  DateTime _lastCallsViewed = DateTime.fromMillisecondsSinceEpoch(0);
   StreamSubscription<SignalingMessage>? _presenceSub;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _initLastCallsViewed();
     _loadCallHistory();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _subscribePresence();
@@ -115,9 +119,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _initLastCallsViewed() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ms = prefs.getInt('last_calls_tab_viewed') ?? 0;
+    if (mounted) setState(() => _lastCallsViewed = DateTime.fromMillisecondsSinceEpoch(ms));
+  }
+
   Future<void> _loadCallHistory() async {
     final records = await LocalDatabase.instance.getCallRecords();
-    if (mounted) setState(() => _callHistory = records);
+    if (!mounted) return;
+    final unseen = records
+        .where((r) => r.status == CallStatus.missed && r.startedAt.isAfter(_lastCallsViewed))
+        .length;
+    setState(() {
+      _callHistory = records;
+      _unseenMissedCount = unseen;
+    });
+  }
+
+  Future<void> _markCallsViewed() async {
+    _lastCallsViewed = DateTime.now();
+    setState(() => _unseenMissedCount = 0);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_calls_tab_viewed', _lastCallsViewed.millisecondsSinceEpoch);
+    await _loadCallHistory();
   }
 
   @override
@@ -132,6 +157,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           .addPostFrameCallback((_) => _loadCallHistory());
     }
     _prevCallState = call.callState;
+
+    // Reload when an incoming call disappears (missed / rejected by us)
+    final hasIncoming = call.incomingCall != null;
+    if (_prevHadIncoming && !hasIncoming) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _loadCallHistory());
+    }
+    _prevHadIncoming = hasIncoming;
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -236,7 +269,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         elevation: 0,
         onDestinationSelected: (i) {
           setState(() => _tab = i);
-          if (i == 1) _loadCallHistory();
+          if (i == 1) _markCallsViewed();
           if (i == 2) context.read<GroupsProvider>().loadGroups();
         },
         destinations: [
@@ -245,9 +278,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             selectedIcon: Icon(Icons.chat_bubble_rounded),
             label: 'Chats',
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.call_outlined),
-            selectedIcon: Icon(Icons.call_rounded),
+          NavigationDestination(
+            icon: _MissedBadge(count: _unseenMissedCount, child: const Icon(Icons.call_outlined)),
+            selectedIcon: _MissedBadge(count: _unseenMissedCount, child: const Icon(Icons.call_rounded)),
             label: 'Calls',
           ),
           NavigationDestination(
@@ -262,6 +295,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Missed calls badge on Calls tab ───────────────────────────
+
+class _MissedBadge extends StatelessWidget {
+  final int count;
+  final Widget child;
+  const _MissedBadge({required this.count, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    if (count == 0) return child;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        child,
+        Positioned(
+          right: -4,
+          top: -4,
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 14),
+            height: 14,
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            decoration: BoxDecoration(
+              color: AppTheme.danger,
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: Center(
+              child: Text(
+                count > 9 ? '9+' : '$count',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -358,75 +433,102 @@ class _CallHistoryTab extends StatelessWidget {
         final peerAvatarUrl = context.read<ContactsProvider>()
             .getByVirtualId(r.peerVirtualId)?.avatarUrl;
 
-        return InkWell(
-          onTap: () {},
-          splashColor: AppTheme.primary.withValues(alpha: 0.08),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                // Avatar
-                UserAvatar(
-                  username: r.peerUsername,
-                  avatarUrl: peerAvatarUrl,
-                  radius: 26,
-                ),
-                const SizedBox(width: 14),
-                // Info
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        r.peerUsername,
-                        style: TextStyle(
-                          color: isMissed
-                              ? AppTheme.danger
-                              : AppTheme.onSurface,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
+        return Material(
+          color: isMissed
+              ? AppTheme.danger.withValues(alpha: 0.06)
+              : Colors.transparent,
+          child: InkWell(
+            onTap: () {},
+            splashColor: (isMissed ? AppTheme.danger : AppTheme.primary)
+                .withValues(alpha: 0.08),
+            child: Container(
+              decoration: isMissed
+                  ? const BoxDecoration(
+                      border: Border(
+                        left: BorderSide(color: AppTheme.danger, width: 3),
                       ),
-                      const SizedBox(height: 3),
-                      Row(
-                        children: [
-                          Icon(iconData, size: 14, color: iconColor),
-                          const SizedBox(width: 4),
-                          Text(
-                            DateFormat('MMM d, HH:mm')
-                                .format(r.startedAt),
-                            style: const TextStyle(
-                                color: AppTheme.muted, fontSize: 12),
+                    )
+                  : null,
+              padding: EdgeInsets.only(
+                left: isMissed ? 13 : 16,
+                right: 16,
+                top: 10,
+                bottom: 10,
+              ),
+              child: Row(
+                children: [
+                  // Avatar
+                  UserAvatar(
+                    username: r.peerUsername,
+                    avatarUrl: peerAvatarUrl,
+                    radius: 26,
+                  ),
+                  const SizedBox(width: 14),
+                  // Info
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          r.peerUsername,
+                          style: TextStyle(
+                            color: isMissed
+                                ? AppTheme.danger
+                                : AppTheme.onSurface,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
                           ),
-                          if (r.durationSeconds != null) ...[
-                            const Text(' · ',
+                        ),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            Icon(iconData, size: 14, color: iconColor),
+                            const SizedBox(width: 4),
+                            if (isMissed)
+                              Text(
+                                'Missed · ',
                                 style: TextStyle(
-                                    color: AppTheme.muted,
-                                    fontSize: 12)),
+                                  color: AppTheme.danger
+                                      .withValues(alpha: 0.8),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
                             Text(
-                              _formatDuration(r.durationSeconds!),
+                              DateFormat('MMM d, HH:mm').format(r.startedAt),
                               style: const TextStyle(
                                   color: AppTheme.muted, fontSize: 12),
                             ),
+                            if (r.durationSeconds != null) ...[
+                              const Text(' · ',
+                                  style: TextStyle(
+                                      color: AppTheme.muted, fontSize: 12)),
+                              Text(
+                                _formatDuration(r.durationSeconds!),
+                                style: const TextStyle(
+                                    color: AppTheme.muted, fontSize: 12),
+                              ),
+                            ],
                           ],
-                        ],
-                      ),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                // Call back button
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: AppTheme.accent.withValues(alpha: 0.15),
-                    shape: BoxShape.circle,
+                  // Call back button
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: (isMissed ? AppTheme.danger : AppTheme.accent)
+                          .withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.call_rounded,
+                        size: 18,
+                        color: isMissed ? AppTheme.danger : AppTheme.accent),
                   ),
-                  child: const Icon(Icons.call_rounded,
-                      size: 18, color: AppTheme.accent),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );

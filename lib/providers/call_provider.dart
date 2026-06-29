@@ -93,8 +93,17 @@ class CallProvider extends ChangeNotifier {
             _cancelCallTimeout();
             NotificationService.stopRingtone();
             NotificationService.cancelAll();
-            _incomingCall = null;
-            await _saveCallRecord(CallStatus.completed);
+            if (_incomingCall != null) {
+              // Caller hung up before we answered — record as missed on our end
+              _activePeerVirtualId = _incomingCall!.callerVirtualId;
+              _activePeerUsername = _incomingCall!.callerUsername;
+              _callDirection = CallDirection.incoming;
+              _incomingCall = null;
+              await _saveCallRecord(CallStatus.missed);
+            } else {
+              _incomingCall = null;
+              await _saveCallRecord(CallStatus.completed);
+            }
             _webrtc.endCall();
             _clearState();
           case SignalingEvent.iceCandidate:
