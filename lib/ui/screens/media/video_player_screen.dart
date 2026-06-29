@@ -25,6 +25,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _downloading = false;
   double _downloadProgress = 0;
   bool _showControls = true;
+  double _playbackSpeed = 1.0;
   Timer? _hideTimer;
 
   @override
@@ -107,6 +108,62 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (_showControls) _scheduleHideControls();
   }
 
+  static const _speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+  void _showSpeedPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A2332),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                  color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+            ),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text('Playback Speed',
+                  style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5)),
+            ),
+            ..._speeds.map((s) {
+              final selected = s == _playbackSpeed;
+              return ListTile(
+                leading: Icon(
+                  selected ? Icons.check_circle_rounded : Icons.circle_outlined,
+                  color: selected ? Colors.white : Colors.white38,
+                  size: 20,
+                ),
+                title: Text(
+                  s == 1.0 ? 'Normal (1×)' : '${s}×',
+                  style: TextStyle(
+                    color: selected ? Colors.white : Colors.white70,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() => _playbackSpeed = s);
+                  _controller?.setPlaybackSpeed(s);
+                },
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _togglePlayPause() {
     final c = _controller!;
     if (c.value.isPlaying) {
@@ -161,6 +218,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: _initialized ? _toggleControls : null,
+        onLongPress: _initialized ? _showSpeedPicker : null,
         child: Stack(
           alignment: Alignment.center,
           children: [
@@ -264,7 +322,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                           },
                         ),
                       ),
-                      // Time row
+                      // Time row + speed indicator
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         child: Row(
@@ -273,6 +331,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                 style: const TextStyle(
                                     color: Colors.white70, fontSize: 12)),
                             const Spacer(),
+                            if (_playbackSpeed != 1.0)
+                              GestureDetector(
+                                onTap: _showSpeedPicker,
+                                child: Container(
+                                  margin: const EdgeInsets.only(right: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    '${_playbackSpeed}×',
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ),
                             Text(_fmt(duration),
                                 style: const TextStyle(
                                     color: Colors.white70, fontSize: 12)),

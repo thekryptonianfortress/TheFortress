@@ -258,6 +258,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     );
   }
 
+  static const _quickEmojis = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+
   void _showMessageOptions(GroupMessage m) {
     final isMe = m.senderId == _myId;
     final group = context.read<GroupsProvider>().groupById(widget.group.id);
@@ -267,25 +269,57 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       context: context,
       backgroundColor: AppTheme.surface,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => SafeArea(
+      builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 36, height: 4,
-              margin: const EdgeInsets.only(top: 12, bottom: 12),
+              margin: const EdgeInsets.only(top: 12, bottom: 4),
               decoration: BoxDecoration(color: AppTheme.muted.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(2)),
             ),
+            // ── Quick emoji reactions ──────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: _quickEmojis.map((e) {
+                  final reacted = m.reactions[e]?.contains(_myId) == true;
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      context.read<GroupsProvider>().addReaction(
+                        groupId: widget.group.id,
+                        messageId: m.id,
+                        emoji: e,
+                      );
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: 44, height: 44,
+                      decoration: BoxDecoration(
+                        color: reacted
+                            ? AppTheme.primary.withValues(alpha: 0.2)
+                            : AppTheme.inputBg,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(child: Text(e, style: const TextStyle(fontSize: 24))),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFF2A3A4A)),
             ListTile(
               leading: const Icon(Icons.reply_rounded, color: AppTheme.primary),
               title: const Text('Reply'),
-              onTap: () { Navigator.pop(context); setState(() => _replyTo = m); },
+              onTap: () { Navigator.pop(ctx); setState(() => _replyTo = m); },
             ),
             ListTile(
               leading: const Icon(Icons.copy_rounded, color: AppTheme.muted),
               title: const Text('Copy'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(ctx);
                 Clipboard.setData(ClipboardData(text: m.content));
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied')));
               },
@@ -295,7 +329,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 leading: const Icon(Icons.edit_rounded, color: AppTheme.accent),
                 title: const Text('Edit'),
                 onTap: () {
-                  Navigator.pop(context);
+                  Navigator.pop(ctx);
                   setState(() { _editingMsg = m; _replyTo = null; });
                   _ctrl.text = m.content;
                   _ctrl.selection = TextSelection.fromPosition(TextPosition(offset: m.content.length));
@@ -306,7 +340,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 leading: const Icon(Icons.delete_rounded, color: AppTheme.danger),
                 title: const Text('Delete', style: TextStyle(color: AppTheme.danger)),
                 onTap: () {
-                  Navigator.pop(context);
+                  Navigator.pop(ctx);
                   context.read<GroupsProvider>().deleteMessage(
                     groupId: widget.group.id,
                     messageId: m.id,
