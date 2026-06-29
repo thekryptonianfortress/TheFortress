@@ -41,6 +41,7 @@ enum SignalingEvent {
   groupDeleted,
   groupChatCleared,
   groupPinChanged,
+  groupPollVoted,
   contactAutoAdded,
 }
 
@@ -194,6 +195,8 @@ class SignalingService {
         _emit(SignalingEvent.groupChatCleared, Map<String, dynamic>.from(data as Map)));
     _socket!.on('group-pin-changed', (data) =>
         _emit(SignalingEvent.groupPinChanged, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-poll-voted', (data) =>
+        _emit(SignalingEvent.groupPollVoted, Map<String, dynamic>.from(data as Map)));
     _socket!.on('contact-auto-added', (data) =>
         _emit(SignalingEvent.contactAutoAdded, Map<String, dynamic>.from(data as Map)));
   }

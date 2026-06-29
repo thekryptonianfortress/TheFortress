@@ -202,6 +202,20 @@ class GroupsProvider extends ChangeNotifier {
           }
           notifyListeners();
 
+        case SignalingEvent.groupPollVoted:
+          final gid = msg.data['group_id'] as String;
+          final msgId = msg.data['message_id'] as String;
+          final rawVotes = msg.data['poll_votes'] as Map<String, dynamic>?;
+          if (rawVotes != null && _messages.containsKey(gid)) {
+            final votes = rawVotes.map((k, v) => MapEntry(int.parse(k), (v as num).toInt()));
+            final msgs = _messages[gid]!;
+            final idx = msgs.indexWhere((m) => m.id == msgId);
+            if (idx != -1) {
+              _messages[gid]![idx] = msgs[idx].copyWith(pollVotes: votes);
+              notifyListeners();
+            }
+          }
+
         case SignalingEvent.groupPinChanged:
           final gid = msg.data['group_id'] as String;
           if (_groups.containsKey(gid)) {
@@ -545,6 +559,42 @@ class GroupsProvider extends ChangeNotifier {
       _groups[groupId] = _groups[groupId]!.copyWith(lastMessage: '', lastMessageAt: null);
     }
     notifyListeners();
+  }
+
+  Future<void> votePoll(String groupId, String messageId, int optionIndex) async {
+    // Optimistic update
+    final msgs = _messages[groupId];
+    if (msgs != null) {
+      final idx = msgs.indexWhere((m) => m.id == messageId);
+      if (idx != -1) {
+        final m = msgs[idx];
+        final updated = Map<int, int>.from(m.pollVotes ?? {});
+        // Remove previous vote if any
+        if (m.myPollVote != null) {
+          updated[m.myPollVote!] = (updated[m.myPollVote!] ?? 1) - 1;
+          if (updated[m.myPollVote!]! <= 0) updated.remove(m.myPollVote!);
+        }
+        updated[optionIndex] = (updated[optionIndex] ?? 0) + 1;
+        _messages[groupId]![idx] = m.copyWith(pollVotes: updated, myPollVote: optionIndex);
+        notifyListeners();
+      }
+    }
+    try {
+      final result = await _service.votePoll(groupId, messageId, optionIndex);
+      // Update with server-confirmed counts
+      final serverVotes = (result['poll_votes'] as Map<String, dynamic>?)
+          ?.map((k, v) => MapEntry(int.parse(k), (v as num).toInt()));
+      final msgs2 = _messages[groupId];
+      if (msgs2 != null && serverVotes != null) {
+        final idx = msgs2.indexWhere((m) => m.id == messageId);
+        if (idx != -1) {
+          _messages[groupId]![idx] = msgs2[idx].copyWith(pollVotes: serverVotes);
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      dev.log('[GroupsProvider] votePoll error: $e');
+    }
   }
 
   Future<void> pinMessage(String groupId, String messageId) async {

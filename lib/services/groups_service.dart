@@ -127,6 +127,16 @@ class GroupsService {
     if (res.statusCode != 200) throw Exception('Failed to clear messages');
   }
 
+  Future<Map<String, dynamic>> votePoll(String groupId, String messageId, int optionIndex) async {
+    final res = await http.post(
+      Uri.parse('$_base/groups/$groupId/messages/$messageId/vote'),
+      headers: await _headers(),
+      body: jsonEncode({'option_index': optionIndex}),
+    );
+    if (res.statusCode != 200) throw Exception('Failed to vote');
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> pinMessage(String groupId, String messageId) async {
     final res = await http.put(
       Uri.parse('$_base/groups/$groupId/pin'),

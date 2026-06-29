@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -23,7 +24,6 @@ import '../../../providers/groups_provider.dart';
 import '../../../providers/messages_provider.dart';
 import '../../../services/media_service.dart';
 import '../../widgets/link_preview_card.dart';
-import '../../widgets/link_text.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/voice_note_player.dart';
 import '../media/photo_view_screen.dart';
@@ -56,6 +56,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   String? _highlightedMessageId;
   String? _mentionQuery;
   List<GroupMember> _mentionSuggestions = [];
+  bool _searchMode = false;
+  String _searchQuery = '';
+  final _searchCtrl = TextEditingController();
+  Set<String> _starredIds = {};
   int _prevMsgCount = 0;
   final Map<String, GlobalKey> _msgKeys = {};
 
@@ -76,7 +80,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
     await provider.loadMessages(widget.group.id);
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
-      setState(() => _isMuted = prefs.getBool('muted_group_${widget.group.id}') ?? false);
+      final starred = prefs.getStringList('starred_${widget.group.id}') ?? [];
+      setState(() {
+        _isMuted = prefs.getBool('muted_group_${widget.group.id}') ?? false;
+        _starredIds = Set<String>.from(starred);
+      });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     // Poll every 30s as fallback
@@ -89,6 +97,7 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
   void dispose() {
     context.read<GroupsProvider>().clearActiveGroup();
     _ctrl.dispose();
+    _searchCtrl.dispose();
     _scrollCtrl.dispose();
     _recorder.dispose();
     _pollTimer?.cancel();
@@ -131,6 +140,104 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         SnackBar(content: Text(_isMuted ? 'Notifications muted' : 'Notifications unmuted')),
       );
     }
+  }
+
+  Future<void> _toggleStar(GroupMessage m) async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      if (_starredIds.contains(m.id)) {
+        _starredIds.remove(m.id);
+      } else {
+        _starredIds.add(m.id);
+      }
+    });
+    await prefs.setStringList('starred_${widget.group.id}', _starredIds.toList());
+  }
+
+  void _showStarredMessages(List<GroupMessage> allMsgs) {
+    final starred = allMsgs.where((m) => _starredIds.contains(m.id)).toList();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (_, sc) => Column(
+          children: [
+            Container(
+              width: 36, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                  color: AppTheme.muted.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            const Text('Starred Messages',
+                style: TextStyle(color: AppTheme.onSurface, fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Expanded(
+              child: starred.isEmpty
+                  ? const Center(child: Text('No starred messages', style: TextStyle(color: AppTheme.muted)))
+                  : ListView.builder(
+                      controller: sc,
+                      itemCount: starred.length,
+                      itemBuilder: (_, i) {
+                        final m = starred[i];
+                        return ListTile(
+                          leading: const Icon(Icons.star_rounded, color: Colors.amber, size: 20),
+                          title: Text(m.isOutgoing ? 'You' : m.senderUsername,
+                              style: const TextStyle(color: AppTheme.primary, fontSize: 13, fontWeight: FontWeight.w600)),
+                          subtitle: Text(
+                            m.content.isNotEmpty ? m.content : _attachmentLabel(m.attachmentType),
+                            style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+                            maxLines: 2, overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Text(
+                            DateFormat('MMM d').format(m.createdAt.toLocal()),
+                            style: const TextStyle(color: AppTheme.muted, fontSize: 11),
+                          ),
+                          onTap: () {
+                            Navigator.pop(context);
+                            _jumpToMessage(m.id);
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _jumpToMessage(String messageId) {
+    setState(() { _searchMode = false; _searchQuery = ''; _searchCtrl.clear(); });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToMessage(messageId));
+  }
+
+  void _showPollCreator() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => _PollCreatorSheet(
+        onSubmit: (question, options) async {
+          final pollData = jsonEncode({'question': question, 'options': options});
+          await context.read<GroupsProvider>().sendMessage(
+            groupId: widget.group.id,
+            content: '',
+            attachmentType: 'poll',
+            attachmentName: pollData,
+          );
+        },
+      ),
+    );
   }
 
   void _showForwardPicker(GroupMessage m) {
@@ -349,6 +456,8 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 onTap: () { Navigator.pop(context); _pickAndSend(MediaService.pickFromGallery); }),
             _AttachOption(icon: Icons.insert_drive_file_rounded, label: 'File', color: Colors.blueGrey,
                 onTap: () { Navigator.pop(context); _pickAndSend(MediaService.pickFile); }),
+            _AttachOption(icon: Icons.poll_rounded, label: 'Poll', color: Colors.teal,
+                onTap: () { Navigator.pop(context); _showPollCreator(); }),
           ],
         ),
       ),
@@ -428,6 +537,14 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 },
               ),
             ListTile(
+              leading: Icon(
+                _starredIds.contains(m.id) ? Icons.star_rounded : Icons.star_border_rounded,
+                color: _starredIds.contains(m.id) ? Colors.amber : AppTheme.muted,
+              ),
+              title: Text(_starredIds.contains(m.id) ? 'Unstar' : 'Star'),
+              onTap: () { Navigator.pop(ctx); _toggleStar(m); },
+            ),
+            ListTile(
               leading: const Icon(Icons.copy_rounded, color: AppTheme.muted),
               title: const Text('Copy'),
               onTap: () {
@@ -482,6 +599,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
       }
     }
 
+    final displayMsgs = (_searchMode && _searchQuery.isNotEmpty)
+        ? msgs.where((m) => m.content.toLowerCase().contains(_searchQuery)).toList()
+        : msgs;
+
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
@@ -489,39 +610,60 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded, color: AppTheme.onSurface),
-          onPressed: () => Navigator.pop(context),
+          onPressed: _searchMode
+              ? () => setState(() { _searchMode = false; _searchQuery = ''; _searchCtrl.clear(); })
+              : () => Navigator.pop(context),
         ),
-        title: GestureDetector(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => GroupInfoScreen(group: group)),
-          ).then((_) => setState(() {})),
-          child: Row(
-            children: [
-              UserAvatar(username: group.name, avatarUrl: group.avatarUrl, radius: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        title: _searchMode
+            ? TextField(
+                controller: _searchCtrl,
+                autofocus: true,
+                style: const TextStyle(color: AppTheme.onSurface, fontSize: 16),
+                decoration: InputDecoration(
+                  hintText: 'Search messages…',
+                  hintStyle: TextStyle(color: AppTheme.muted.withValues(alpha: 0.6)),
+                  border: InputBorder.none,
+                ),
+                onChanged: (v) => setState(() => _searchQuery = v.toLowerCase()),
+              )
+            : GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => GroupInfoScreen(group: group)),
+                ).then((_) => setState(() {})),
+                child: Row(
                   children: [
-                    Text(group.name,
-                        style: const TextStyle(color: AppTheme.onSurface, fontSize: 16, fontWeight: FontWeight.w700),
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    Text(
-                      typingUser != null ? '$typingUser is typing…' : '${group.memberCount} members',
-                      style: TextStyle(
-                        color: typingUser != null ? AppTheme.primary : AppTheme.muted,
-                        fontSize: 12,
-                        fontStyle: typingUser != null ? FontStyle.italic : FontStyle.normal,
+                    UserAvatar(username: group.name, avatarUrl: group.avatarUrl, radius: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(group.name,
+                              style: const TextStyle(color: AppTheme.onSurface, fontSize: 16, fontWeight: FontWeight.w700),
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                          Text(
+                            typingUser != null ? '$typingUser is typing…' : '${group.memberCount} members',
+                            style: TextStyle(
+                              color: typingUser != null ? AppTheme.primary : AppTheme.muted,
+                              fontSize: 12,
+                              fontStyle: typingUser != null ? FontStyle.italic : FontStyle.normal,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
-            ],
-          ),
-        ),
-        actions: [
+        actions: _searchMode
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, color: AppTheme.muted),
+                  onPressed: () => setState(() { _searchMode = false; _searchQuery = ''; _searchCtrl.clear(); }),
+                ),
+              ]
+            : [
           if (group.isAdmin && group.pendingCount > 0)
             Stack(
               children: [
@@ -545,6 +687,17 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 ),
               ],
             ),
+          IconButton(
+            icon: const Icon(Icons.search_rounded, color: AppTheme.onSurface),
+            tooltip: 'Search',
+            onPressed: () => setState(() { _searchMode = true; _searchQuery = ''; }),
+          ),
+          IconButton(
+            icon: Icon(Icons.star_rounded,
+                color: _starredIds.isNotEmpty ? Colors.amber : AppTheme.onSurface),
+            tooltip: 'Starred messages',
+            onPressed: () => _showStarredMessages(msgs),
+          ),
           IconButton(
             icon: Icon(
               _isMuted ? Icons.notifications_off_rounded : Icons.notifications_rounded,
@@ -579,26 +732,34 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
             ),
           // Chat messages
           Expanded(
-            child: msgs.isEmpty
+            child: displayMsgs.isEmpty
                 ? Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.group_rounded, size: 56, color: AppTheme.muted.withValues(alpha: 0.4)),
+                        Icon(
+                          _searchMode ? Icons.search_off_rounded : Icons.group_rounded,
+                          size: 56,
+                          color: AppTheme.muted.withValues(alpha: 0.4),
+                        ),
                         const SizedBox(height: 12),
-                        Text('Start the conversation in ${group.name}',
-                            style: TextStyle(color: AppTheme.muted.withValues(alpha: 0.7), fontSize: 14),
-                            textAlign: TextAlign.center),
+                        Text(
+                          _searchMode
+                              ? 'No messages match your search'
+                              : 'Start the conversation in ${group.name}',
+                          style: TextStyle(color: AppTheme.muted.withValues(alpha: 0.7), fontSize: 14),
+                          textAlign: TextAlign.center,
+                        ),
                       ],
                     ),
                   )
                 : ListView.builder(
-                    controller: _scrollCtrl,
+                    controller: _searchMode ? null : _scrollCtrl,
                     padding: const EdgeInsets.only(top: 8, bottom: 8),
-                    itemCount: msgs.length,
+                    itemCount: displayMsgs.length,
                     itemBuilder: (_, idx) {
-                      final m = msgs[idx];
-                      final prevMsg = idx > 0 ? msgs[idx - 1] : null;
+                      final m = displayMsgs[idx];
+                      final prevMsg = idx > 0 ? displayMsgs[idx - 1] : null;
                       final showDate = prevMsg == null ||
                           !DateUtils.isSameDay(m.createdAt.toLocal(), prevMsg.createdAt.toLocal());
                       final nextAudioSource = _nextAudio(msgs, m);
@@ -626,6 +787,11 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                               ),
                               onReplyTap: m.replyToId != null
                                   ? () => _scrollToMessage(m.replyToId!)
+                                  : null,
+                              onVotePoll: (optionIndex) => context.read<GroupsProvider>().votePoll(
+                                widget.group.id, m.id, optionIndex),
+                              onSearchResultTap: _searchMode
+                                  ? () => _jumpToMessage(m.id)
                                   : null,
                             ),
                           ),
@@ -852,6 +1018,8 @@ class _GroupMessageBubble extends StatelessWidget {
   final VoidCallback onLongPress;
   final void Function(String emoji) onReact;
   final VoidCallback? onReplyTap;
+  final void Function(int optionIndex)? onVotePoll;
+  final VoidCallback? onSearchResultTap;
 
   const _GroupMessageBubble({
     required this.message,
@@ -862,6 +1030,8 @@ class _GroupMessageBubble extends StatelessWidget {
     required this.onLongPress,
     required this.onReact,
     this.onReplyTap,
+    this.onVotePoll,
+    this.onSearchResultTap,
   });
 
   static const _quickEmojis = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
@@ -925,7 +1095,8 @@ class _GroupMessageBubble extends StatelessWidget {
       color: highlighted ? Colors.amber.withValues(alpha: 0.15) : Colors.transparent,
       child: GestureDetector(
       onLongPress: onLongPress,
-      onDoubleTap: () => _showEmojiPicker(context),
+      onTap: onSearchResultTap,
+      onDoubleTap: onSearchResultTap == null ? () => _showEmojiPicker(context) : null,
       child: Padding(
         padding: EdgeInsets.only(
           left: isMe ? 72 : 16,
@@ -1056,6 +1227,20 @@ class _GroupMessageBubble extends StatelessWidget {
 
   Widget _buildContent(BuildContext context, String time, Color metaColor, bool isMe) {
     final m = message;
+
+    // Poll messages
+    if (m.attachmentType == 'poll' && m.attachmentName != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _GroupPollWidget(message: m, onVote: onVotePoll),
+          const SizedBox(height: 2),
+          Text(time, style: TextStyle(color: metaColor, fontSize: 11)),
+        ],
+      );
+    }
+
     final hasAttachment = m.attachmentUrl != null;
     Widget? attachmentWidget;
 
@@ -1123,11 +1308,11 @@ class _GroupMessageBubble extends StatelessWidget {
     final hasText = m.content.trim().isNotEmpty;
     final isEdited = m.editedAt != null;
 
-    final _urlRe = RegExp(
+    final urlRe = RegExp(
       r'(https?://[^\s]+|www\.[a-zA-Z0-9\-]+\.[^\s]+)',
       caseSensitive: false,
     );
-    final firstUrl = hasText ? _urlRe.firstMatch(m.content)?.group(0) : null;
+    final firstUrl = hasText ? urlRe.firstMatch(m.content)?.group(0) : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -1784,6 +1969,302 @@ class _ForwardPickerState extends State<_ForwardPicker>
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Group poll widget ─────────────────────────────────────────
+
+class _GroupPollWidget extends StatelessWidget {
+  final GroupMessage message;
+  final void Function(int optionIndex)? onVote;
+
+  const _GroupPollWidget({required this.message, this.onVote});
+
+  @override
+  Widget build(BuildContext context) {
+    Map<String, dynamic> pollData;
+    try {
+      pollData = jsonDecode(message.attachmentName!) as Map<String, dynamic>;
+    } catch (_) {
+      return const Text('Invalid poll', style: TextStyle(color: Colors.white54));
+    }
+    final question = pollData['question'] as String? ?? '';
+    final options = (pollData['options'] as List?)?.map((e) => e.toString()).toList() ?? [];
+    final votes = message.pollVotes ?? {};
+    final myVote = message.myPollVote;
+    final totalVotes = votes.values.fold(0, (a, b) => a + b);
+
+    return Container(
+      width: 240,
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              children: [
+                const Icon(Icons.poll_rounded, color: Colors.white70, size: 16),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(question,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
+          ),
+          ...List.generate(options.length, (i) {
+            final voteCount = votes[i] ?? 0;
+            final frac = totalVotes > 0 ? voteCount / totalVotes : 0.0;
+            final isSelected = myVote == i;
+            return GestureDetector(
+              onTap: onVote != null ? () => onVote!(i) : null,
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: Stack(
+                  children: [
+                    // Progress bar background
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: LinearProgressIndicator(
+                        value: frac,
+                        minHeight: 36,
+                        backgroundColor: Colors.white.withValues(alpha: 0.1),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          isSelected
+                              ? AppTheme.primary.withValues(alpha: 0.45)
+                              : Colors.white.withValues(alpha: 0.15),
+                        ),
+                      ),
+                    ),
+                    // Option label and vote %
+                    Positioned.fill(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        child: Row(
+                          children: [
+                            if (isSelected)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 6),
+                                child: Icon(Icons.check_circle_rounded,
+                                    color: AppTheme.primary, size: 14),
+                              ),
+                            Expanded(
+                              child: Text(options[i],
+                                  style: TextStyle(
+                                      color: isSelected ? Colors.white : Colors.white70,
+                                      fontSize: 13,
+                                      fontWeight: isSelected
+                                          ? FontWeight.w600
+                                          : FontWeight.normal)),
+                            ),
+                            Text(
+                              totalVotes > 0
+                                  ? '${(frac * 100).round()}%'
+                                  : '$voteCount',
+                              style: TextStyle(
+                                  color: isSelected ? Colors.white : Colors.white54,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              '$totalVotes vote${totalVotes == 1 ? '' : 's'}',
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Poll creator sheet ─────────────────────────────────────────
+
+class _PollCreatorSheet extends StatefulWidget {
+  final Future<void> Function(String question, List<String> options) onSubmit;
+
+  const _PollCreatorSheet({required this.onSubmit});
+
+  @override
+  State<_PollCreatorSheet> createState() => _PollCreatorSheetState();
+}
+
+class _PollCreatorSheetState extends State<_PollCreatorSheet> {
+  final _questionCtrl = TextEditingController();
+  final List<TextEditingController> _optionCtrls = [
+    TextEditingController(),
+    TextEditingController(),
+  ];
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _questionCtrl.dispose();
+    for (final c in _optionCtrls) { c.dispose(); }
+    super.dispose();
+  }
+
+  void _addOption() {
+    if (_optionCtrls.length >= 5) return;
+    setState(() => _optionCtrls.add(TextEditingController()));
+  }
+
+  void _removeOption(int i) {
+    if (_optionCtrls.length <= 2) return;
+    setState(() {
+      _optionCtrls[i].dispose();
+      _optionCtrls.removeAt(i);
+    });
+  }
+
+  Future<void> _send() async {
+    final question = _questionCtrl.text.trim();
+    final options = _optionCtrls
+        .map((c) => c.text.trim())
+        .where((t) => t.isNotEmpty)
+        .toList();
+    if (question.isEmpty || options.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a question and at least 2 options')),
+      );
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      await widget.onSubmit(question, options);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _sending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to create poll: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: SingleChildScrollView(
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36, height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                        color: AppTheme.muted.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                const Text('Create Poll',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: AppTheme.onSurface,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: _questionCtrl,
+                  style: const TextStyle(color: AppTheme.onSurface),
+                  decoration: InputDecoration(
+                    labelText: 'Question',
+                    labelStyle: const TextStyle(color: AppTheme.muted),
+                    filled: true,
+                    fillColor: AppTheme.surface,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text('Options',
+                    style: TextStyle(
+                        color: AppTheme.muted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                ...List.generate(_optionCtrls.length, (i) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _optionCtrls[i],
+                          style: const TextStyle(color: AppTheme.onSurface),
+                          decoration: InputDecoration(
+                            hintText: 'Option ${i + 1}',
+                            hintStyle: TextStyle(color: AppTheme.muted.withValues(alpha: 0.5)),
+                            filled: true,
+                            fillColor: AppTheme.surface,
+                            border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 12),
+                          ),
+                        ),
+                      ),
+                      if (_optionCtrls.length > 2)
+                        IconButton(
+                          icon: const Icon(Icons.remove_circle_outline_rounded,
+                              color: AppTheme.danger, size: 20),
+                          onPressed: () => _removeOption(i),
+                        ),
+                    ],
+                  ),
+                )),
+                if (_optionCtrls.length < 5)
+                  TextButton.icon(
+                    onPressed: _addOption,
+                    icon: const Icon(Icons.add_rounded, size: 18),
+                    label: const Text('Add option'),
+                    style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
+                  ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: _sending ? null : _send,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: _sending
+                      ? const SizedBox(
+                          width: 20, height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Create Poll',
+                          style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

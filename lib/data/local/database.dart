@@ -21,7 +21,7 @@ class LocalDatabase {
     final path = join(await getDatabasesPath(), AppConstants.dbName);
     return openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -102,6 +102,10 @@ class LocalDatabase {
       await db.execute('ALTER TABLE groups ADD COLUMN pinned_message_content TEXT');
       await db.execute('ALTER TABLE groups ADD COLUMN pinned_message_type TEXT');
     }
+    if (oldVersion < 10) {
+      await db.execute('ALTER TABLE group_messages ADD COLUMN poll_votes TEXT');
+      await db.execute('ALTER TABLE group_messages ADD COLUMN my_poll_vote INTEGER');
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -176,7 +180,9 @@ class LocalDatabase {
         is_deleted INTEGER NOT NULL DEFAULT 0,
         edited_at TEXT,
         created_at TEXT NOT NULL,
-        is_outgoing INTEGER NOT NULL DEFAULT 0
+        is_outgoing INTEGER NOT NULL DEFAULT 0,
+        poll_votes TEXT,
+        my_poll_vote INTEGER
       )
     ''');
 

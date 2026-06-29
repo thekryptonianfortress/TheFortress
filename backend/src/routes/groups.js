@@ -58,6 +58,14 @@ const router = express.Router();
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS group_poll_votes (
+        poll_message_id UUID REFERENCES group_messages(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        option_index INTEGER NOT NULL,
+        PRIMARY KEY (poll_message_id, user_id)
+      )
+    `);
     console.log('[groups] tables ready');
   } catch (err) {
     console.error('[groups] table init error:', err.message);
@@ -409,7 +417,9 @@ router.get('/:id/messages', authenticate, async (req, res) => {
 
     const limit = Math.min(parseInt(req.query.limit) || 100, 200);
     const result = await db.query(
-      `SELECT gm.*, u.username AS sender_username, u.virtual_id AS sender_virtual_id, u.avatar_url AS sender_avatar_url
+      `SELECT gm.*, u.username AS sender_username, u.virtual_id AS sender_virtual_id, u.avatar_url AS sender_avatar_url,
+              (SELECT option_index FROM group_poll_votes WHERE poll_message_id = gm.id AND user_id = $3 LIMIT 1) AS my_poll_vote,
+              (SELECT jsonb_object_agg(option_index::text, cnt) FROM (SELECT option_index, COUNT(*) as cnt FROM group_poll_votes WHERE poll_message_id = gm.id GROUP BY option_index) t) AS poll_votes
        FROM group_messages gm
        JOIN users u ON u.id = gm.sender_id
        WHERE gm.group_id = $1
@@ -419,7 +429,7 @@ router.get('/:id/messages', authenticate, async (req, res) => {
          )
        ORDER BY gm.created_at DESC
        LIMIT $2`,
-      [id, limit]
+      [id, limit, req.userId]
     );
     res.json(result.rows.reverse());
   } catch (err) {
@@ -510,6 +520,39 @@ router.delete('/:id/pin', authenticate, async (req, res) => {
   } catch (err) {
     console.error('[groups DELETE /:id/pin]', err.message);
     res.status(500).json({ error: 'Failed to unpin message' });
+  }
+});
+
+// POST /groups/:id/messages/:msgId/vote — cast or change poll vote
+router.post('/:id/messages/:msgId/vote', authenticate, async (req, res) => {
+  try {
+    const { id, msgId } = req.params;
+    const { option_index } = req.body;
+    if (option_index === undefined || option_index === null) {
+      return res.status(400).json({ error: 'option_index required' });
+    }
+    if (!await isMember(id, req.userId)) return res.status(403).json({ error: 'Not a member' });
+
+    await db.query(
+      `INSERT INTO group_poll_votes (poll_message_id, user_id, option_index)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (poll_message_id, user_id)
+       DO UPDATE SET option_index = EXCLUDED.option_index`,
+      [msgId, req.userId, option_index]
+    );
+
+    const votesRes = await db.query(
+      `SELECT option_index, COUNT(*) AS cnt FROM group_poll_votes WHERE poll_message_id = $1 GROUP BY option_index`,
+      [msgId]
+    );
+    const pollVotes = {};
+    for (const row of votesRes.rows) pollVotes[row.option_index] = parseInt(row.cnt);
+
+    await notifyMembers(id, 'group-poll-voted', { group_id: id, message_id: msgId, poll_votes: pollVotes });
+    res.json({ ok: true, my_poll_vote: option_index, poll_votes: pollVotes });
+  } catch (err) {
+    console.error('[groups POST vote]', err.message);
+    res.status(500).json({ error: 'Failed to vote' });
   }
 });
 

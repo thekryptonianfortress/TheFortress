@@ -17,6 +17,8 @@ class GroupMessage {
   final DateTime? editedAt;
   final DateTime createdAt;
   final bool isOutgoing;
+  final Map<int, int>? pollVotes;
+  final int? myPollVote;
 
   const GroupMessage({
     required this.id,
@@ -35,6 +37,8 @@ class GroupMessage {
     this.editedAt,
     required this.createdAt,
     required this.isOutgoing,
+    this.pollVotes,
+    this.myPollVote,
   });
 
   GroupMessage copyWith({
@@ -42,6 +46,8 @@ class GroupMessage {
     Map<String, List<String>>? reactions,
     bool? isDeleted,
     DateTime? editedAt,
+    Map<int, int>? pollVotes,
+    int? myPollVote,
   }) =>
       GroupMessage(
         id: id,
@@ -60,6 +66,8 @@ class GroupMessage {
         editedAt: editedAt ?? this.editedAt,
         createdAt: createdAt,
         isOutgoing: isOutgoing,
+        pollVotes: pollVotes ?? this.pollVotes,
+        myPollVote: myPollVote ?? this.myPollVote,
       );
 
   factory GroupMessage.fromJson(Map<String, dynamic> j, String myId) => GroupMessage(
@@ -81,7 +89,21 @@ class GroupMessage {
             : null,
         createdAt: DateTime.parse(j['created_at'] as String),
         isOutgoing: j['sender_id'] == myId,
+        pollVotes: _parsePollVotes(j['poll_votes']),
+        myPollVote: (j['my_poll_vote'] as num?)?.toInt(),
       );
+
+  static Map<int, int>? _parsePollVotes(dynamic raw) {
+    if (raw == null) return null;
+    try {
+      final map = raw is String
+          ? jsonDecode(raw) as Map<String, dynamic>
+          : raw as Map<String, dynamic>;
+      return map.map((k, v) => MapEntry(int.parse(k), (v as num).toInt()));
+    } catch (_) {
+      return null;
+    }
+  }
 
   static Map<String, List<String>> _parseReactions(dynamic raw) {
     if (raw == null) return {};
@@ -112,6 +134,10 @@ class GroupMessage {
         'edited_at': editedAt?.toIso8601String(),
         'created_at': createdAt.toIso8601String(),
         'is_outgoing': isOutgoing ? 1 : 0,
+        'poll_votes': pollVotes != null
+            ? jsonEncode(pollVotes!.map((k, v) => MapEntry('$k', v)))
+            : null,
+        'my_poll_vote': myPollVote,
       };
 
   factory GroupMessage.fromDbMap(Map<String, dynamic> m) => GroupMessage(
@@ -131,5 +157,7 @@ class GroupMessage {
         editedAt: m['edited_at'] != null ? DateTime.tryParse(m['edited_at'] as String) : null,
         createdAt: DateTime.parse(m['created_at'] as String),
         isOutgoing: (m['is_outgoing'] as int? ?? 0) == 1,
+        pollVotes: _parsePollVotes(m['poll_votes']),
+        myPollVote: m['my_poll_vote'] as int?,
       );
 }
