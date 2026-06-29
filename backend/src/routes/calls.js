@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { requireAuth } = require('../middleware');
+const { authenticate } = require('../middleware');
 const { getIo, getOnlineUsers } = require('../signaling');
 
 // POST /calls/reject
@@ -8,7 +8,7 @@ const { getIo, getOnlineUsers } = require('../signaling');
 // notification while the app is backgrounded/killed (no socket available).
 // Looks up the caller via the call_id format "callerId::calleeId::timestamp"
 // and emits call-rejected to their socket.
-router.post('/reject', requireAuth, (req, res) => {
+router.post('/reject', authenticate, (req, res) => {
   const { call_id } = req.body;
   if (!call_id) return res.status(400).json({ error: 'call_id required' });
 
