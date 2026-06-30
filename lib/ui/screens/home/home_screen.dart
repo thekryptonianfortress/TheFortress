@@ -137,6 +137,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _deleteCallRecord(CallRecord r) async {
+    await LocalDatabase.instance.deleteCallRecord(r.id);
+    await _loadCallHistory();
+  }
+
+  Future<void> _clearAllCallRecords() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Clear call history'),
+        content: const Text('Delete all call logs?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Clear all', style: TextStyle(color: AppTheme.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true && mounted) {
+      await LocalDatabase.instance.clearCallRecords();
+      await _loadCallHistory();
+    }
+  }
+
   Future<void> _markCallsViewed() async {
     _lastCallsViewed = DateTime.now();
     setState(() => _unseenMissedCount = 0);
@@ -205,6 +231,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     onPressed: () =>
                         Navigator.pushNamed(context, '/contacts/add'),
                     tooltip: 'Add contact',
+                  ),
+                if (_tab == 1 && _callHistory.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.delete_sweep_rounded,
+                        color: AppTheme.onSurface, size: 22),
+                    tooltip: 'Clear all calls',
+                    onPressed: _clearAllCallRecords,
                   ),
                 if (_tab == 2)
                   IconButton(
@@ -297,7 +330,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               index: _tab,
               children: [
                 const ContactsScreen(),
-                _CallHistoryTab(records: _callHistory),
+                _CallHistoryTab(
+                  records: _callHistory,
+                  onDelete: _deleteCallRecord,
+                  onCallBack: (r) {
+                    final contact = context
+                        .read<ContactsProvider>()
+                        .getByVirtualId(r.peerVirtualId);
+                    if (contact != null) {
+                      Navigator.pushNamed(context, '/call/outgoing',
+                          arguments: contact);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('${r.peerUsername} is not in your contacts')),
+                      );
+                    }
+                  },
+                ),
                 const GroupsListScreen(),
                 const SettingsScreen(),
               ],
@@ -416,7 +465,14 @@ class _GroupsBadge extends StatelessWidget {
 
 class _CallHistoryTab extends StatelessWidget {
   final List<CallRecord> records;
-  const _CallHistoryTab({required this.records});
+  final void Function(CallRecord r) onCallBack;
+  final void Function(CallRecord r) onDelete;
+
+  const _CallHistoryTab({
+    required this.records,
+    required this.onCallBack,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -459,6 +515,24 @@ class _CallHistoryTab extends StatelessWidget {
         final r = records[i];
         final isOutgoing = r.direction == CallDirection.outgoing;
         final isMissed = r.status == CallStatus.missed;
+        final tile = _buildTile(context, r, isOutgoing, isMissed);
+        return Dismissible(
+          key: ValueKey(r.id),
+          direction: DismissDirection.endToStart,
+          background: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            color: AppTheme.danger.withValues(alpha: 0.85),
+            child: const Icon(Icons.delete_rounded, color: Colors.white),
+          ),
+          onDismissed: (_) => onDelete(r),
+          child: tile,
+        );
+      },
+    );
+  }
+
+  Widget _buildTile(BuildContext context, CallRecord r, bool isOutgoing, bool isMissed) {
 
         Color iconColor;
         IconData iconData;
@@ -481,7 +555,7 @@ class _CallHistoryTab extends StatelessWidget {
               ? AppTheme.danger.withValues(alpha: 0.06)
               : Colors.transparent,
           child: InkWell(
-            onTap: () {},
+            onTap: () => onCallBack(r),
             splashColor: (isMissed ? AppTheme.danger : AppTheme.primary)
                 .withValues(alpha: 0.08),
             child: Container(
@@ -558,25 +632,26 @@ class _CallHistoryTab extends StatelessWidget {
                     ),
                   ),
                   // Call back button
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: (isMissed ? AppTheme.danger : AppTheme.accent)
-                          .withValues(alpha: 0.15),
-                      shape: BoxShape.circle,
+                  GestureDetector(
+                    onTap: () => onCallBack(r),
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: (isMissed ? AppTheme.danger : AppTheme.accent)
+                            .withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.call_rounded,
+                          size: 18,
+                          color: isMissed ? AppTheme.danger : AppTheme.accent),
                     ),
-                    child: Icon(Icons.call_rounded,
-                        size: 18,
-                        color: isMissed ? AppTheme.danger : AppTheme.accent),
                   ),
                 ],
               ),
             ),
           ),
         );
-      },
-    );
   }
 
   String _formatDuration(int secs) {

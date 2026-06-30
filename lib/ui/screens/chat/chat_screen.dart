@@ -30,6 +30,9 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  // Persist unsent drafts across navigations (in-memory, per contact)
+  static final Map<String, String> _drafts = {};
+
   final _ctrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final Map<String, String> _decryptedCache = {};
@@ -56,6 +59,14 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _msgService = MessagingService(context.read<SignalingService>());
     _scrollCtrl.addListener(_onScroll);
+
+    // Restore draft before wiring listener so it doesn't trigger a re-render cycle
+    final draft = _drafts[widget.contact.contactId];
+    if (draft != null && draft.isNotEmpty) {
+      _ctrl.text = draft;
+      _hasText = true;
+    }
+
     _ctrl.addListener(_onTextFieldChanged);
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -706,6 +717,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _recordTimer?.cancel();
     _recorder.dispose();
     _ctrl.removeListener(_onTextFieldChanged);
+    // Save draft so it survives navigation (cleared automatically when message is sent)
+    final draft = _ctrl.text.trim();
+    if (draft.isNotEmpty) {
+      _drafts[widget.contact.contactId] = draft;
+    } else {
+      _drafts.remove(widget.contact.contactId);
+    }
     _ctrl.dispose();
     _scrollCtrl.removeListener(_onScroll);
     _scrollCtrl.dispose();

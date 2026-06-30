@@ -12,6 +12,7 @@ class ContactTile extends StatelessWidget {
   final VoidCallback? onChat;
   final VoidCallback? onCall;
   final VoidCallback? onLongPress;
+  final VoidCallback? onAvatarTap;
 
   const ContactTile({
     super.key,
@@ -22,6 +23,7 @@ class ContactTile extends StatelessWidget {
     this.onChat,
     this.onCall,
     this.onLongPress,
+    this.onAvatarTap,
   });
 
   @override
@@ -38,8 +40,11 @@ class ContactTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
           children: [
-            // ── Avatar ───────────────────────────────────────
-            Stack(
+            // ── Avatar (tappable independently from the tile) ──
+            GestureDetector(
+              onTap: onAvatarTap,
+              behavior: HitTestBehavior.opaque,
+              child: Stack(
               children: [
                 UserAvatar(
                   username: contact.username,
@@ -62,6 +67,7 @@ class ContactTile extends StatelessWidget {
                     ),
                   ),
               ],
+            ),
             ),
             const SizedBox(width: 14),
 

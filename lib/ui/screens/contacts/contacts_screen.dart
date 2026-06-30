@@ -5,6 +5,7 @@ import '../../../providers/contacts_provider.dart';
 import '../../../providers/messages_provider.dart';
 import '../../../data/models/contact.dart';
 import '../../widgets/contact_tile.dart';
+import '../../widgets/user_avatar.dart';
 
 String _attachmentLabel(String type) {
   switch (type) {
@@ -36,6 +37,49 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
   void _openCall(Contact c) =>
       Navigator.pushNamed(context, '/call/outgoing', arguments: c);
+
+  void _showAvatarView(Contact c) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black87,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        insetPadding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              c.username,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: c.avatarUrl != null
+                  ? Image.network(
+                      c.avatarUrl!,
+                      width: 260,
+                      height: 260,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _avatarFallback(c),
+                    )
+                  : _avatarFallback(c),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _avatarFallback(Contact c) {
+    return UserAvatar(username: c.username, radius: 130, fontSize: 90);
+  }
 
   void _showOptions(Contact c) {
     showModalBottomSheet(
@@ -202,6 +246,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
           onChat: () => _openChat(c),
           onCall: () => _openCall(c),
           onLongPress: () => _showOptions(c),
+          onAvatarTap: () => _showAvatarView(c),
         );
       },
     );

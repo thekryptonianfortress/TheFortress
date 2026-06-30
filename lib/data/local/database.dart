@@ -546,4 +546,14 @@ class LocalDatabase {
         orderBy: 'started_at DESC', limit: limit);
     return rows.map(CallRecord.fromDbMap).toList();
   }
+
+  Future<void> deleteCallRecord(String id) async {
+    final d = await db;
+    await d.delete('call_records', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> clearCallRecords() async {
+    final d = await db;
+    await d.delete('call_records');
+  }
 }
