@@ -184,15 +184,16 @@ class _IncomingCallListenerState extends State<_IncomingCallListener> {
       _incomingPushed = false;
     }
 
-    // ── Active call → push /call/active (handles notification-answer path) ──
-    // IncomingCallScreen uses pushReplacementNamed to get to /call/active.
-    // If the user answered via the notification action instead, nobody navigates
-    // there — so we do it here, skipping if /call/active is already on top.
+    // ── Active call → push /call/active ──────────────────────────────────────
+    // Re-pushes if: notification-answer path, or user minimized and came back.
     if (call.callState == CallState.active && !_activePushed) {
       _activePushed = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_routeTracker.currentRouteName != '/call/active') {
-          _navigatorKey.currentState?.pushNamed('/call/active');
+          _navigatorKey.currentState?.pushNamed('/call/active').then((_) {
+            // Screen was popped (minimized). Allow re-push next time.
+            if (mounted) setState(() => _activePushed = false);
+          });
         }
       });
     }

@@ -117,9 +117,22 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
 
         // ── VIDEO CALL layout ──────────────────────────────────────────────
         if (call.isVideo) {
+          // Keep controls visible while waiting for the remote stream so the
+          // user can always see their own camera and end the call.
+          if (!call.hasRemoteStream && !_controlsVisible) {
+            _controlsVisible = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _controlsFadeCtrl.forward();
+            });
+          }
+
           return AnnotatedRegion<SystemUiOverlayStyle>(
             value: SystemUiOverlayStyle.light,
-            child: Scaffold(
+            child: PopScope(
+              // Prevent accidental back-dismiss during an active video call.
+              // The user must use End Call or the minimize chevron.
+              canPop: false,
+              child: Scaffold(
               backgroundColor: Colors.black,
               body: GestureDetector(
                 behavior: HitTestBehavior.opaque,
@@ -140,11 +153,14 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                                   .RTCVideoViewObjectFitCover),
                     ),
 
-                    // ── "Waiting / Connecting" overlay ────────────────────
-                    if (!_pipSwapped && (isConnecting || isReconnecting))
+                    // ── "Waiting for video" overlay ───────────────────────
+                    // Shown until the remote stream actually arrives —
+                    // quality alone is NOT reliable (ICE can connect before
+                    // the first video frame is decoded).
+                    if (!_pipSwapped && !call.hasRemoteStream)
                       Positioned.fill(
                         child: Container(
-                          color: Colors.black.withValues(alpha: 0.55),
+                          color: Colors.black.withValues(alpha: 0.88),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
@@ -163,11 +179,13 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              const SizedBox(height: 8),
+                              const SizedBox(height: 10),
                               _StatusDots(
                                 text: isReconnecting
                                     ? 'Reconnecting'
-                                    : 'Connecting',
+                                    : isConnecting
+                                        ? 'Connecting'
+                                        : 'Waiting for video',
                                 color: isReconnecting
                                     ? Colors.amber
                                     : Colors.white70,
@@ -445,7 +463,8 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                 ),
               ),
             ),
-          );
+          ),    // PopScope
+          );    // AnnotatedRegion
         }
 
         // ── AUDIO CALL layout ──────────────────────────────────────────────

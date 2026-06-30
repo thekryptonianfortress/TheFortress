@@ -37,6 +37,7 @@ class CallProvider extends ChangeNotifier {
   bool _isSpeakerOn = false;
   bool _isVideo = false;
   bool _isCameraOn = true;
+  bool _hasRemoteStream = false;
   StreamSubscription<SignalingMessage>? _sigSub;
   StreamSubscription<CallState>? _stateSub;
   Timer? _callTimeoutTimer;
@@ -52,6 +53,7 @@ class CallProvider extends ChangeNotifier {
   bool get isSpeakerOn => _isSpeakerOn;
   bool get isVideo => _isVideo;
   bool get isCameraOn => _isCameraOn;
+  bool get hasRemoteStream => _hasRemoteStream;
   String? get activePeerUsername => _activePeerUsername;
   String? get activePeerVirtualId => _activePeerVirtualId;
 
@@ -168,6 +170,7 @@ class CallProvider extends ChangeNotifier {
       await _initRenderers();
       _webrtc.onRemoteStream = (stream) {
         remoteRenderer.srcObject = stream;
+        _hasRemoteStream = true;
         notifyListeners();
       };
     }
@@ -215,6 +218,7 @@ class CallProvider extends ChangeNotifier {
       await _initRenderers();
       _webrtc.onRemoteStream = (stream) {
         remoteRenderer.srcObject = stream;
+        _hasRemoteStream = true;
         notifyListeners();
       };
     }
@@ -292,6 +296,7 @@ class CallProvider extends ChangeNotifier {
     _isSpeakerOn = false;
     _isVideo = false;
     _isCameraOn = true;
+    _hasRemoteStream = false;
     localRenderer.srcObject = null;
     remoteRenderer.srcObject = null;
     _webrtc.onRemoteStream = null;
