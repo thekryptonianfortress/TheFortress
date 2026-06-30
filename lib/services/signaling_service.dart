@@ -52,6 +52,7 @@ enum SignalingEvent {
   gcCallAnswered,
   gcIceCandidate,
   gcPeerEnded,
+  groupCallMissed,
 }
 
 class SignalingMessage {
@@ -226,6 +227,8 @@ class SignalingService {
         _emit(SignalingEvent.gcIceCandidate, Map<String, dynamic>.from(data as Map)));
     _socket!.on('gc-peer-ended', (data) =>
         _emit(SignalingEvent.gcPeerEnded, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('group-call-missed', (data) =>
+        _emit(SignalingEvent.groupCallMissed, Map<String, dynamic>.from(data as Map)));
   }
 
   void _emit(SignalingEvent event, Map<String, dynamic> data) {
@@ -250,6 +253,7 @@ class SignalingService {
         'caller_virtual_id': callerVirtualId,
         'caller_username': callerUsername,
         'sdp': sdp,
+        'is_video': isVideo,
       });
       // Inject call-offer-ack locally so CallProvider gets the callId
       _emit(SignalingEvent.callOfferAck, {'call_id': callId});

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../data/local/secure_storage.dart';
 import '../services/signaling_service.dart';
+import '../services/notification_service.dart';
 
 class GroupCallParticipant {
   final String virtualId;
@@ -110,6 +111,12 @@ class GroupCallProvider extends ChangeNotifier {
           case SignalingEvent.gcPeerEnded:
             final vId = msg.data['from_virtual_id'] as String?;
             if (vId != null && _inCall) await _removePeer(vId);
+          case SignalingEvent.groupCallMissed:
+            NotificationService.showMissedGroupCallNotification(
+              groupName: msg.data['group_name'] as String? ?? 'Group',
+              callerName: msg.data['caller_username'] as String? ?? 'Someone',
+              isVideo: msg.data['is_video'] as bool? ?? false,
+            );
           default:
             break;
         }
@@ -346,11 +353,27 @@ class GroupCallProvider extends ChangeNotifier {
         {'urls': 'stun:stun.l.google.com:19302'},
         {'urls': 'stun:stun1.l.google.com:19302'},
       ],
-      'sdpSemantics': 'unified-plan',
+      'sdpSemantics': 'plan-b',
       'iceTransportPolicy': 'all',
     });
 
+    pc.onAddTrack = (stream, track) {
+      if (stream.id == _localStream?.id) return; // skip local
+      if (peer.remoteStream != null) return;
+      peer.remoteStream = stream;
+      peer.renderer.srcObject = stream;
+      notifyListeners();
+    };
+
+    pc.onAddStream = (stream) {
+      if (peer.remoteStream != null) return;
+      peer.remoteStream = stream;
+      peer.renderer.srcObject = stream;
+      notifyListeners();
+    };
+
     pc.onTrack = (event) {
+      if (peer.remoteStream != null) return;
       if (event.streams.isNotEmpty) {
         peer.remoteStream = event.streams.first;
         peer.renderer.srcObject = event.streams.first;

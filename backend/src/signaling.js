@@ -7,6 +7,8 @@ const onlineUsers = new Map();
 const virtualIdToSocket = new Map();
 // Map: groupId -> [{userId, virtualId, username}]
 const groupCallRooms = new Map();
+// Map: groupId -> { isVideo, groupName } — metadata for active group calls
+const groupCallMeta = new Map();
 let _io = null;
 
 function getIo() { return _io; }
@@ -20,8 +22,24 @@ function parseCallId(callId) {
   return { callerId: parts[0], calleeId: parts[1] };
 }
 
+async function initDb() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS missed_group_calls (
+      id SERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      group_id TEXT NOT NULL,
+      group_name TEXT,
+      caller_virtual_id TEXT,
+      caller_username TEXT,
+      is_video BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+}
+
 function setupSignaling(io) {
   _io = io;
+  initDb().catch(e => console.error('[initDb]', e.message));
   io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('Unauthorized'));
@@ -126,6 +144,58 @@ function setupSignaling(io) {
           console.error('[auto-add contact pending]', e.message);
         }
       }
+    }
+
+    // ── Group call reconnect handling ───────────────────────────
+    // If a group call is still active, re-invite the user to join
+    try {
+      for (const [gid, room] of groupCallRooms.entries()) {
+        if (room.some(p => p.userId === userId)) continue; // already in call
+        const mc = await db.query(
+          `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+          [gid, userId]
+        );
+        if (mc.rows.length === 0) continue;
+        const meta = groupCallMeta.get(gid);
+        const starter = room[0];
+        socket.emit('group-call-incoming', {
+          group_id: gid,
+          group_name: meta?.groupName || 'Group',
+          is_video: meta?.isVideo || false,
+          caller_virtual_id: starter?.virtualId || '',
+          caller_username: starter?.username || '',
+        });
+        // Remove any stored missed record — they now have a live invite
+        await db.query(
+          'DELETE FROM missed_group_calls WHERE user_id = $1 AND group_id = $2',
+          [userId, gid]
+        );
+      }
+    } catch (e) {
+      console.error('[group-call reconnect]', e.message);
+    }
+
+    // Deliver missed group calls (ended while user was offline)
+    try {
+      const missedCalls = await db.query(
+        `SELECT * FROM missed_group_calls WHERE user_id = $1 ORDER BY created_at ASC`,
+        [userId]
+      );
+      for (const call of missedCalls.rows) {
+        socket.emit('group-call-missed', {
+          group_id: call.group_id,
+          group_name: call.group_name,
+          caller_virtual_id: call.caller_virtual_id,
+          caller_username: call.caller_username,
+          is_video: call.is_video,
+          started_at: call.created_at,
+        });
+      }
+      if (missedCalls.rows.length > 0) {
+        await db.query('DELETE FROM missed_group_calls WHERE user_id = $1', [userId]);
+      }
+    } catch (e) {
+      console.error('[missed-group-calls delivery]', e.message);
     }
 
     // ── Call Signaling ─────────────────────────────────────────
@@ -580,9 +650,10 @@ function setupSignaling(io) {
 
         const groupRes = await db.query('SELECT name FROM groups WHERE id = $1', [group_id]);
         const groupName = groupRes.rows[0]?.name || 'Group';
+        groupCallMeta.set(group_id, { isVideo: !!is_video, groupName });
 
         const membersRes = await db.query(
-          `SELECT u.id FROM group_members gm JOIN users u ON u.id = gm.user_id
+          `SELECT u.id, u.fcm_token FROM group_members gm JOIN users u ON u.id = gm.user_id
            WHERE gm.group_id = $1 AND gm.status = 'active' AND gm.user_id != $2`,
           [group_id, userId]
         );
@@ -593,6 +664,21 @@ function setupSignaling(io) {
               group_id, group_name: groupName, is_video: !!is_video,
               caller_virtual_id: virtual_id, caller_username: username,
             });
+          } else {
+            // Offline: push notification + store for socket delivery on reconnect
+            sendPushNotification(m.fcm_token, {
+              type: 'group_call_incoming',
+              group_id,
+              group_name: groupName,
+              caller_virtual_id: virtual_id,
+              caller_username: username,
+              is_video: String(!!is_video),
+            });
+            await db.query(
+              `INSERT INTO missed_group_calls (user_id, group_id, group_name, caller_virtual_id, caller_username, is_video)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+              [m.id, group_id, groupName, virtual_id, username, !!is_video]
+            ).catch(e => console.error('[missed_group_calls insert]', e.message));
           }
         }
       } catch (e) { console.error('[group-call-start]', e.message); }
@@ -631,7 +717,7 @@ function setupSignaling(io) {
       const leaver = room.find(p => p.userId === userId);
       const idx = room.findIndex(p => p.userId === userId);
       if (idx !== -1) room.splice(idx, 1);
-      if (room.length === 0) groupCallRooms.delete(group_id);
+      if (room.length === 0) { groupCallRooms.delete(group_id); groupCallMeta.delete(group_id); }
       if (leaver) {
         for (const p of room) {
           const ps = onlineUsers.get(p.userId);
@@ -677,7 +763,7 @@ function setupSignaling(io) {
         if (idx !== -1) {
           const leaver = room[idx];
           room.splice(idx, 1);
-          if (room.length === 0) { groupCallRooms.delete(gid); }
+          if (room.length === 0) { groupCallRooms.delete(gid); groupCallMeta.delete(gid); }
           else {
             for (const p of room) {
               const ps = onlineUsers.get(p.userId);

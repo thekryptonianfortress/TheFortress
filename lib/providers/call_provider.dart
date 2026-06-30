@@ -132,12 +132,15 @@ class CallProvider extends ChangeNotifier {
   }
 
   void _handleIncomingCall(Map<String, dynamic> data) {
+    final rawIsVideo = data['is_video'];
+    // ignore: avoid_print
+    print('[CallProvider] incoming-call raw is_video=$rawIsVideo (${rawIsVideo.runtimeType})');
     _incomingCall = IncomingCallInfo(
       callId: data['call_id'] as String,
       callerVirtualId: data['caller_virtual_id'] as String,
       callerUsername: data['caller_username'] as String,
       offerSdp: Map<String, dynamic>.from(data['sdp'] as Map),
-      isVideo: data['is_video'] as bool? ?? false,
+      isVideo: rawIsVideo == true,
     );
     NotificationService.showCallNotification(
       callerName: _incomingCall!.callerUsername,
@@ -161,6 +164,8 @@ class CallProvider extends ChangeNotifier {
     required String targetUsername,
     bool isVideo = false,
   }) async {
+    // ignore: avoid_print
+    print('[CallProvider] startCall isVideo=$isVideo');
     _isVideo = isVideo;
     _isCameraOn = true;
     _activePeerVirtualId = targetVirtualId;
@@ -205,6 +210,8 @@ class CallProvider extends ChangeNotifier {
   Future<void> answerCall() async {
     if (_incomingCall == null) return;
     final info = _incomingCall!;
+    // ignore: avoid_print
+    print('[CallProvider] answerCall isVideo=${info.isVideo}');
     _activePeerVirtualId = info.callerVirtualId;
     _activePeerUsername = info.callerUsername;
     _callDirection = CallDirection.incoming;
@@ -297,8 +304,10 @@ class CallProvider extends ChangeNotifier {
     _isVideo = false;
     _isCameraOn = true;
     _hasRemoteStream = false;
-    localRenderer.srcObject = null;
-    remoteRenderer.srcObject = null;
+    if (_renderersInitialized) {
+      localRenderer.srcObject = null;
+      remoteRenderer.srcObject = null;
+    }
     _webrtc.onRemoteStream = null;
     notifyListeners();
   }

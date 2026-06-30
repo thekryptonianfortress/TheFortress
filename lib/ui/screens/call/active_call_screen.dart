@@ -132,6 +132,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                 behavior: HitTestBehavior.opaque,
                 onTap: _onTapScreen,
                 child: Stack(
+                  fit: StackFit.expand,
                   children: [
                     // ── Main video (remote, or local if swapped) ──────────
                     Positioned.fill(
@@ -190,10 +191,10 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                       ),
 
                     // ── Top gradient scrim ────────────────────────────────
-                    FadeTransition(
-                      opacity: _controlsFade,
-                      child: Positioned(
-                        top: 0, left: 0, right: 0,
+                    Positioned(
+                      top: 0, left: 0, right: 0,
+                      child: FadeTransition(
+                        opacity: _controlsFade,
                         child: Container(
                           height: 160,
                           decoration: BoxDecoration(
@@ -211,7 +212,9 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                     ),
 
                     // ── Top bar ───────────────────────────────────────────
-                    FadeTransition(
+                    Positioned(
+                      top: 0, left: 0, right: 0,
+                      child: FadeTransition(
                       opacity: _controlsFade,
                       child: SafeArea(
                         child: Padding(
@@ -259,6 +262,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                             ],
                           ),
                         ),
+                      ),
                       ),
                     ),
 
@@ -330,10 +334,10 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                     ),
 
                     // ── Bottom gradient scrim ─────────────────────────────
-                    FadeTransition(
-                      opacity: _controlsFade,
-                      child: Positioned(
-                        bottom: 0, left: 0, right: 0,
+                    Positioned(
+                      bottom: 0, left: 0, right: 0,
+                      child: FadeTransition(
+                        opacity: _controlsFade,
                         child: Container(
                           height: 220,
                           decoration: BoxDecoration(
@@ -351,10 +355,10 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                     ),
 
                     // ── Bottom controls ───────────────────────────────────
-                    FadeTransition(
-                      opacity: _controlsFade,
-                      child: Positioned(
-                        bottom: 0, left: 0, right: 0,
+                    Positioned(
+                      bottom: 0, left: 0, right: 0,
+                      child: FadeTransition(
+                        opacity: _controlsFade,
                         child: SafeArea(
                           top: false,
                           child: Padding(

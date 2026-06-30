@@ -126,6 +126,12 @@ class NotificationService {
         callerVirtualId: callerVirtualId,
         callId: callId,
       );
+    } else if (type == 'group_call_incoming') {
+      await showGroupCallNotification(
+        groupName: data['group_name'] ?? 'Group',
+        callerName: data['caller_username'] ?? 'Someone',
+        isVideo: data['is_video'] == 'true',
+      );
     }
   }
 
@@ -208,6 +214,60 @@ class NotificationService {
       );
     } catch (e) {
       dev.log('[NotificationService] showCallNotification error: $e');
+    }
+  }
+
+  /// Show a group call notification (active call — user can open app to join).
+  static Future<void> showGroupCallNotification({
+    required String groupName,
+    required String callerName,
+    required bool isVideo,
+  }) async {
+    if (!_initialized) return;
+    try {
+      await _local.show(
+        3,
+        isVideo ? 'Incoming Group Video Call' : 'Incoming Group Voice Call',
+        '$callerName started a call in $groupName',
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _callChannelId,
+            'Calls',
+            importance: Importance.max,
+            priority: Priority.max,
+            fullScreenIntent: true,
+            category: AndroidNotificationCategory.call,
+          ),
+        ),
+      );
+    } catch (e) {
+      dev.log('[NotificationService] showGroupCallNotification error: $e');
+    }
+  }
+
+  /// Show a missed group call notification (call ended while user was offline).
+  static Future<void> showMissedGroupCallNotification({
+    required String groupName,
+    required String callerName,
+    required bool isVideo,
+  }) async {
+    if (!_initialized) return;
+    try {
+      await _local.show(
+        4,
+        'Missed ${isVideo ? 'Group Video' : 'Group Voice'} Call',
+        '$callerName called in $groupName',
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _callChannelId,
+            'Calls',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+        ),
+      );
+    } catch (e) {
+      dev.log('[NotificationService] showMissedGroupCallNotification error: $e');
     }
   }
 

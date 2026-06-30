@@ -72,23 +72,34 @@ class WebRTCService {
     final iceServers = await _getIceServers();
     final config = {
       'iceServers': iceServers,
-      'sdpSemantics': 'unified-plan',
-      // 'all' = P2P via STUN first, TURN relay as fallback.
-      // 'relay' would force TURN-only, breaking calls without a TURN server.
+      // plan-b reliably fires onAddStream on Android; unified-plan often
+      // delivers empty event.streams in onTrack, causing blank video screens.
+      'sdpSemantics': 'plan-b',
       'iceTransportPolicy': 'all',
     };
 
     _pc = await createPeerConnection(config);
 
-    // onAddStream is more reliable on Android (unified-plan onTrack often
-    // fires with empty event.streams on some devices/versions).
-    _pc!.onAddStream = (stream) {
+    // onAddTrack fires for BOTH local and remote track additions in flutter_webrtc.
+    // Guard against local stream by comparing stream IDs.
+    _pc!.onAddTrack = (stream, track) {
+      if (stream.id == _localStream?.id) return; // skip local
+      if (_remoteStream != null) return;
       _remoteStream = stream;
       onRemoteStream?.call(stream);
     };
 
+    // onAddStream as secondary fallback (some devices/versions fire this instead).
+    _pc!.onAddStream = (stream) {
+      if (_remoteStream != null) return;
+      _remoteStream = stream;
+      onRemoteStream?.call(stream);
+    };
+
+    // onTrack as tertiary fallback — keep synchronous to avoid unhandled futures.
     _pc!.onTrack = (event) {
-      if (event.streams.isNotEmpty && _remoteStream == null) {
+      if (_remoteStream != null) return;
+      if (event.streams.isNotEmpty) {
         _remoteStream = event.streams.first;
         onRemoteStream?.call(_remoteStream!);
       }

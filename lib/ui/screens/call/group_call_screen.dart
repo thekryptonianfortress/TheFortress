@@ -286,13 +286,14 @@ class _VideoGroupCallScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
+        fit: StackFit.expand,
         children: [
           // Participant video grid
           Positioned.fill(
             child: _VideoGrid(gc: gc, participants: participants),
           ),
 
-          // Top bar
+          // Top bar gradient scrim
           Positioned(
             top: 0, left: 0, right: 0,
             child: Container(
@@ -306,24 +307,29 @@ class _VideoGroupCallScreen extends StatelessWidget {
               ),
             ),
           ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Row(
-                children: [
-                  const Icon(Icons.groups_rounded, color: Colors.white70, size: 16),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      gc.groupName ?? 'Group Call',
-                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+
+          // Top bar content — must be Positioned so Stack doesn't shrink-wrap to it
+          Positioned(
+            top: 0, left: 0, right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Row(
+                  children: [
+                    const Icon(Icons.groups_rounded, color: Colors.white70, size: 16),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        gc.groupName ?? 'Group Call',
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
                     ),
-                  ),
-                  Text(
-                    '${participants.length + 1} in call',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                ],
+                    Text(
+                      '${participants.length + 1} in call',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -388,13 +394,15 @@ class _VideoGrid extends StatelessWidget {
       _VideoTile(
         label: 'You',
         renderer: gc.localRenderer,
-        hasVideo: gc.isCameraOn,
+        // Show video only if camera is on AND we actually have a local stream
+        hasVideo: gc.isCameraOn && gc.localRenderer.srcObject != null,
         isLocal: true,
       ),
       ...participants.map((p) => _VideoTile(
         label: p.username,
         renderer: p.renderer,
-        hasVideo: p.hasVideo,
+        // Show video if renderer has a stream (regardless of track count)
+        hasVideo: p.renderer.srcObject != null,
       )),
     ];
 
