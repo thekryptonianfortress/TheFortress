@@ -166,6 +166,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     _prevHadIncoming = hasIncoming;
 
+    final callState = context.watch<CallProvider>().callState;
+    final isCallActive = callState == CallState.active || callState == CallState.calling;
+
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: _tab == 3
@@ -253,15 +256,55 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 const SizedBox(width: 4),
               ],
             ),
-      body: IndexedStack(
-        index: _tab,
+      body: Column(
         children: [
-          const ContactsScreen(),
-          _CallHistoryTab(records: _callHistory),
-          const GroupsListScreen(),
-          const SettingsScreen(),
+          // ── Active call banner (WhatsApp-style tap to return) ──────────────
+          if (isCallActive)
+            GestureDetector(
+              onTap: () => Navigator.of(context).pushNamed('/call/active'),
+              child: Container(
+                width: double.infinity,
+                color: AppTheme.accent.withValues(alpha: 0.92),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(
+                      context.read<CallProvider>().isVideo
+                          ? Icons.videocam_rounded
+                          : Icons.call_rounded,
+                      color: Colors.white, size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        callState == CallState.calling
+                            ? 'Calling…   Tap to return'
+                            : 'Call in progress   Tap to return',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white, size: 20),
+                  ],
+                ),
+              ),
+            ),
+          Expanded(
+            child: IndexedStack(
+              index: _tab,
+              children: [
+                const ContactsScreen(),
+                _CallHistoryTab(records: _callHistory),
+                const GroupsListScreen(),
+                const SettingsScreen(),
+              ],
+            ),
+          ),
         ],
-      ),
+      ),      // Column
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         backgroundColor: AppTheme.inputBg,

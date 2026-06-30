@@ -117,22 +117,16 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
 
         // ── VIDEO CALL layout ──────────────────────────────────────────────
         if (call.isVideo) {
-          // Keep controls visible while waiting for the remote stream so the
-          // user can always see their own camera and end the call.
+          // While waiting for remote stream, always show controls so the user
+          // can see their own camera preview and has access to end-call.
           if (!call.hasRemoteStream && !_controlsVisible) {
             _controlsVisible = true;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _controlsFadeCtrl.forward();
-            });
+            _controlsFadeCtrl.value = 1.0;
           }
 
           return AnnotatedRegion<SystemUiOverlayStyle>(
             value: SystemUiOverlayStyle.light,
-            child: PopScope(
-              // Prevent accidental back-dismiss during an active video call.
-              // The user must use End Call or the minimize chevron.
-              canPop: false,
-              child: Scaffold(
+            child: Scaffold(
               backgroundColor: Colors.black,
               body: GestureDetector(
                 behavior: HitTestBehavior.opaque,
@@ -228,8 +222,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                               IconButton(
                                 icon: const Icon(Icons.keyboard_arrow_down_rounded,
                                     color: Colors.white, size: 30),
-                                onPressed: () =>
-                                    Navigator.of(context).popUntil((r) => r.isFirst),
+                                onPressed: () => Navigator.of(context).pop(),
                               ),
                               // Peer info
                               Expanded(
@@ -463,7 +456,6 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                 ),
               ),
             ),
-          ),    // PopScope
           );    // AnnotatedRegion
         }
 

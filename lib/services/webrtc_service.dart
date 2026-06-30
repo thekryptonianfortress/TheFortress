@@ -80,8 +80,15 @@ class WebRTCService {
 
     _pc = await createPeerConnection(config);
 
+    // onAddStream is more reliable on Android (unified-plan onTrack often
+    // fires with empty event.streams on some devices/versions).
+    _pc!.onAddStream = (stream) {
+      _remoteStream = stream;
+      onRemoteStream?.call(stream);
+    };
+
     _pc!.onTrack = (event) {
-      if (event.streams.isNotEmpty) {
+      if (event.streams.isNotEmpty && _remoteStream == null) {
         _remoteStream = event.streams.first;
         onRemoteStream?.call(_remoteStream!);
       }

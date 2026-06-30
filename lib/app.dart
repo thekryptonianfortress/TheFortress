@@ -185,15 +185,14 @@ class _IncomingCallListenerState extends State<_IncomingCallListener> {
     }
 
     // ── Active call → push /call/active ──────────────────────────────────────
-    // Re-pushes if: notification-answer path, or user minimized and came back.
+    // Push once when call becomes active (notification-answer path, etc.).
+    // _activePushed is reset by the route tracker when the user leaves and
+    // re-enters — the home screen banner handles voluntary return.
     if (call.callState == CallState.active && !_activePushed) {
       _activePushed = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_routeTracker.currentRouteName != '/call/active') {
-          _navigatorKey.currentState?.pushNamed('/call/active').then((_) {
-            // Screen was popped (minimized). Allow re-push next time.
-            if (mounted) setState(() => _activePushed = false);
-          });
+          _navigatorKey.currentState?.pushNamed('/call/active');
         }
       });
     }
