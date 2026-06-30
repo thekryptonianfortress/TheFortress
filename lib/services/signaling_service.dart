@@ -53,6 +53,7 @@ enum SignalingEvent {
   gcIceCandidate,
   gcPeerEnded,
   groupCallMissed,
+  callUpgradeAck,
 }
 
 class SignalingMessage {
@@ -229,6 +230,8 @@ class SignalingService {
         _emit(SignalingEvent.gcPeerEnded, Map<String, dynamic>.from(data as Map)));
     _socket!.on('group-call-missed', (data) =>
         _emit(SignalingEvent.groupCallMissed, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('call-upgrade-ack', (data) =>
+        _emit(SignalingEvent.callUpgradeAck, Map<String, dynamic>.from(data as Map)));
   }
 
   void _emit(SignalingEvent event, Map<String, dynamic> data) {
@@ -367,6 +370,22 @@ class SignalingService {
 
   void sendGcPeerEnd({required String targetVirtualId}) {
     _socket?.emit('gc-peer-end', {'target_virtual_id': targetVirtualId});
+  }
+
+  void sendCallUpgrade({
+    required String callId,
+    required String addVirtualId,
+    required String groupId,
+    required String groupName,
+    required bool isVideo,
+  }) {
+    _socket?.emit('call-upgrade', {
+      'call_id': callId,
+      'add_virtual_id': addVirtualId,
+      'group_id': groupId,
+      'group_name': groupName,
+      'is_video': isVideo,
+    });
   }
 
   // ── Outbound: Messaging ────────────────────────────────────

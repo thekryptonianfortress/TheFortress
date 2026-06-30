@@ -38,6 +38,7 @@ class CallProvider extends ChangeNotifier {
   bool _isVideo = false;
   bool _isCameraOn = true;
   bool _hasRemoteStream = false;
+  bool _upgradingToGroup = false;
   StreamSubscription<SignalingMessage>? _sigSub;
   StreamSubscription<CallState>? _stateSub;
   Timer? _callTimeoutTimer;
@@ -54,8 +55,12 @@ class CallProvider extends ChangeNotifier {
   bool get isVideo => _isVideo;
   bool get isCameraOn => _isCameraOn;
   bool get hasRemoteStream => _hasRemoteStream;
+  bool get upgradingToGroup => _upgradingToGroup;
   String? get activePeerUsername => _activePeerUsername;
   String? get activePeerVirtualId => _activePeerVirtualId;
+
+  /// Set by the active call screen to handle upgrade to group call.
+  void Function(String groupId, String groupName, bool isVideo)? onUpgradeToGroup;
 
   CallProvider(this._signaling, this._webrtc) {
     _listenSignaling();
@@ -121,6 +126,14 @@ class CallProvider extends ChangeNotifier {
           case SignalingEvent.iceCandidate:
             await _webrtc.addIceCandidate(
               Map<String, dynamic>.from(msg.data['candidate'] as Map),
+            );
+          case SignalingEvent.callUpgradeAck:
+            _upgradingToGroup = true;
+            notifyListeners();
+            onUpgradeToGroup?.call(
+              msg.data['group_id'] as String,
+              msg.data['group_name'] as String? ?? 'Call',
+              msg.data['is_video'] as bool? ?? false,
             );
           default:
             break;
@@ -262,6 +275,33 @@ class CallProvider extends ChangeNotifier {
     _clearState();
   }
 
+  /// Invite a contact to join the current 1:1 call, escalating it to a group call.
+  Future<void> addParticipant({
+    required String targetVirtualId,
+    required String targetUsername,
+  }) async {
+    final callId = _webrtc.activeCallId;
+    if (callId == null) return;
+    final myUsername = await SecureStorage.getUsername() ?? '';
+    final groupId = 'adhoc_${DateTime.now().millisecondsSinceEpoch}';
+    final groupName = "$myUsername's Call";
+    _signaling.sendCallUpgrade(
+      callId: callId,
+      addVirtualId: targetVirtualId,
+      groupId: groupId,
+      groupName: groupName,
+      isVideo: _isVideo,
+    );
+    // Transition fires when call-upgrade-ack is received
+  }
+
+  /// Called by the active call screen's dispose after navigating to the group call screen.
+  void finishUpgrade() {
+    _upgradingToGroup = false;
+    _webrtc.endCall();
+    _clearState();
+  }
+
   void toggleMute() {
     _isMuted = !_isMuted;
     _webrtc.setMicMute(_isMuted);
@@ -344,6 +384,7 @@ class CallProvider extends ChangeNotifier {
   void dispose() {
     _cancelCallTimeout();
     NotificationService.onCallAction = null;
+    onUpgradeToGroup = null;
     _webrtc.onCallDisconnected = null;
     _webrtc.onQualityChanged = null;
     _webrtc.onRemoteStream = null;

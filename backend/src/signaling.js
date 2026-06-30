@@ -265,6 +265,72 @@ function setupSignaling(io) {
       if (peerSocket) io.to(peerSocket).emit('ice-candidate', { call_id, candidate });
     });
 
+    socket.on('call-upgrade', async (data) => {
+      // Escalates an active 1:1 call to a group call by inviting a third party.
+      const { call_id, add_virtual_id, group_id, group_name, is_video } = data;
+      try {
+        const { callerId, calleeId } = parseCallId(call_id);
+        const peerId = callerId === userId ? calleeId : callerId;
+        const peerSocket = onlineUsers.get(peerId);
+
+        const callerRes = await db.query(
+          'SELECT virtual_id, username FROM users WHERE id = $1', [userId]
+        );
+        const caller = callerRes.rows[0];
+        const resolvedName = group_name || `${caller?.username || 'Someone'}'s Call`;
+
+        // End the 1:1 call for the existing peer and re-invite them to the group call
+        if (peerSocket) {
+          io.to(peerSocket).emit('call-ended', { call_id });
+          io.to(peerSocket).emit('group-call-incoming', {
+            group_id,
+            group_name: resolvedName,
+            is_video: !!is_video,
+            caller_virtual_id: caller?.virtual_id || '',
+            caller_username: caller?.username || '',
+          });
+        }
+
+        // Invite the new participant
+        const target = await getUserByVirtualId(add_virtual_id);
+        if (target) {
+          const targetSocket = onlineUsers.get(target.id);
+          if (targetSocket) {
+            io.to(targetSocket).emit('group-call-incoming', {
+              group_id,
+              group_name: resolvedName,
+              is_video: !!is_video,
+              caller_virtual_id: caller?.virtual_id || '',
+              caller_username: caller?.username || '',
+            });
+          } else {
+            sendPushNotification(target.fcm_token, {
+              type: 'group_call_incoming',
+              group_id,
+              group_name: resolvedName,
+              caller_virtual_id: caller?.virtual_id || '',
+              caller_username: caller?.username || '',
+              is_video: String(!!is_video),
+            });
+            await db.query(
+              `INSERT INTO missed_group_calls (user_id, group_id, group_name, caller_virtual_id, caller_username, is_video)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+              [target.id, group_id, resolvedName, caller?.virtual_id || '', caller?.username || '', !!is_video]
+            ).catch(e => console.error('[call-upgrade missed_group_calls]', e.message));
+          }
+        }
+
+        // Ack to caller so they can transition to group call
+        socket.emit('call-upgrade-ack', {
+          group_id,
+          group_name: resolvedName,
+          is_video: !!is_video,
+        });
+      } catch (e) {
+        console.error('[call-upgrade]', e.message);
+      }
+    });
+
     // ── Messaging ──────────────────────────────────────────────
 
     socket.on('send-message', async (data) => {

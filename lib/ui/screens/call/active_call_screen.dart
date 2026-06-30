@@ -6,8 +6,10 @@ import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
 import '../../../providers/call_provider.dart';
 import '../../../providers/contacts_provider.dart';
+import '../../../providers/group_call_provider.dart';
 import '../../../services/webrtc_service.dart';
 import '../../widgets/user_avatar.dart';
+import 'group_call_screen.dart';
 
 class ActiveCallScreen extends StatefulWidget {
   const ActiveCallScreen({super.key});
@@ -36,6 +38,17 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _seconds++);
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<CallProvider>().onUpgradeToGroup = (groupId, groupName, isVideo) async {
+        final gc = context.read<GroupCallProvider>();
+        await gc.startCall(groupId: groupId, groupName: groupName, isVideo: isVideo);
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const GroupCallScreen()),
+          );
+        }
+      };
+    });
 
     _reconnectCtrl = AnimationController(
       vsync: this,
@@ -58,6 +71,10 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
     _hideTimer?.cancel();
     _reconnectCtrl.dispose();
     _controlsFadeCtrl.dispose();
+    final cp = context.read<CallProvider>();
+    // If we're mid-upgrade, clean up the 1:1 WebRTC side now that we've navigated away
+    if (cp.upgradingToGroup) cp.finishUpgrade();
+    cp.onUpgradeToGroup = null;
     super.dispose();
   }
 
@@ -95,11 +112,75 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
     if (_controlsVisible) _scheduleHide();
   }
 
+  void _showAddParticipantSheet(BuildContext context, CallProvider call) {
+    final contacts = context.read<ContactsProvider>().contacts;
+    final available = contacts
+        .where((c) => c.virtualId != call.activePeerVirtualId)
+        .toList();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF0D1117),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 36, height: 4,
+            margin: const EdgeInsets.only(top: 10, bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.white24,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text(
+              'Add to call',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+          ),
+          if (available.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text('No other contacts to add', style: TextStyle(color: Colors.white54)),
+            )
+          else
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: available.length,
+                itemBuilder: (ctx, i) {
+                  final c = available[i];
+                  return ListTile(
+                    leading: UserAvatar(username: c.username, avatarUrl: c.avatarUrl, radius: 20, fontSize: 15),
+                    title: Text(c.username, style: const TextStyle(color: Colors.white)),
+                    subtitle: Text(c.virtualId, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      call.addParticipant(
+                        targetVirtualId: c.virtualId,
+                        targetUsername: c.username,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<CallProvider>(
       builder: (context, call, _) {
-        if (call.callState == CallState.idle || call.callState == CallState.ended) {
+        if ((call.callState == CallState.idle || call.callState == CallState.ended)
+            && !call.upgradingToGroup) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
           });
@@ -252,6 +333,12 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                                     ),
                                   ],
                                 ),
+                              ),
+                              // Add participant
+                              IconButton(
+                                icon: const Icon(Icons.person_add_rounded, color: Colors.white70, size: 22),
+                                tooltip: 'Add to call',
+                                onPressed: () => _showAddParticipantSheet(context, call),
                               ),
                               // Quality badge
                               _QualityBadge(
@@ -563,6 +650,13 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
                           active: call.isSpeakerOn,
                           activeColor: AppTheme.primary,
                           onTap: call.toggleSpeaker,
+                        ),
+                        _ControlButton(
+                          icon: Icons.person_add_rounded,
+                          label: 'Add',
+                          active: false,
+                          activeColor: AppTheme.primary,
+                          onTap: () => _showAddParticipantSheet(context, call),
                         ),
                       ],
                     ),
