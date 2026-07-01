@@ -69,15 +69,15 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 16),
               const Text('Welcome back', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              const Text('Sign in with your Pager ID', style: TextStyle(color: AppTheme.muted)),
+              const Text('Sign in with your phone number or Pager ID', style: TextStyle(color: AppTheme.muted)),
               const SizedBox(height: 40),
               TextField(
                 controller: _virtualIdCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Pager ID  (e.g. PGR-A1B2-C3D4)',
+                  labelText: 'Phone number or Pager ID',
                   prefixIcon: Icon(Icons.badge_outlined),
+                  hintText: '+1 555 000 0000',
                 ),
-                textCapitalization: TextCapitalization.characters,
               ),
               const SizedBox(height: 16),
               TextField(

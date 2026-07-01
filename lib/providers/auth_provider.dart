@@ -19,6 +19,7 @@ class AuthProvider extends ChangeNotifier {
   String? _virtualId;
   String? _username;
   String? _avatarUrl;
+  String? _phoneNumber;
 
   bool get isAuthenticated => _isAuthenticated;
   bool get isLoading => _isLoading;
@@ -27,6 +28,8 @@ class AuthProvider extends ChangeNotifier {
   String? get virtualId => _virtualId;
   String? get username => _username;
   String? get avatarUrl => _avatarUrl;
+  String? get phoneNumber => _phoneNumber;
+  bool get hasPhoneNumber => _phoneNumber != null && _phoneNumber!.isNotEmpty;
 
   Future<void> checkSession() async {
     final session = await SecureStorage.getSession();
@@ -35,6 +38,7 @@ class AuthProvider extends ChangeNotifier {
       _virtualId = session['virtualId'];
       _username = session['username'];
       _avatarUrl = session['avatarUrl'];
+      _phoneNumber = session['phoneNumber'];
       _isAuthenticated = true;
       notifyListeners();
       // Refresh profile in background to pick up any server-side changes
@@ -54,20 +58,23 @@ class AuthProvider extends ChangeNotifier {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         _username = data['username'] as String?;
         _avatarUrl = _normalizeAvatarUrl(data['avatar_url'] as String?);
+        _phoneNumber = data['phone_number'] as String?;
         await SecureStorage.saveUsername(_username ?? '');
         await SecureStorage.saveAvatarUrl(_avatarUrl);
+        await SecureStorage.savePhoneNumber(_phoneNumber);
         notifyListeners();
       }
     } catch (_) {}
   }
 
-  Future<bool> register(String username, String password) async {
+  Future<bool> register(String username, String password, String phoneNumber) async {
     _setLoading(true);
     try {
-      final data = await AuthService.register(username, password);
+      final data = await AuthService.register(username, password, phoneNumber);
       _userId = data['user']['id'] as String;
       _virtualId = data['user']['virtual_id'] as String;
       _username = data['user']['username'] as String;
+      _phoneNumber = data['user']['phone_number'] as String?;
       _avatarUrl = null;
       _isAuthenticated = true;
       _error = null;
@@ -87,8 +94,10 @@ class AuthProvider extends ChangeNotifier {
       _userId = data['user']['id'] as String;
       _virtualId = data['user']['virtual_id'] as String;
       _username = data['user']['username'] as String;
+      _phoneNumber = data['user']['phone_number'] as String?;
       _avatarUrl = _normalizeAvatarUrl(data['user']['avatar_url'] as String?);
       await SecureStorage.saveAvatarUrl(_avatarUrl);
+      await SecureStorage.savePhoneNumber(_phoneNumber);
       _isAuthenticated = true;
       _error = null;
       return true;
@@ -171,6 +180,22 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Link or update phone number. Returns null on success, error string on failure.
+  Future<String?> linkPhoneNumber(String phoneNumber) async {
+    _setLoading(true);
+    try {
+      final data = await AuthService.linkPhoneNumber(phoneNumber);
+      _phoneNumber = data['phone_number'] as String?;
+      _virtualId = data['virtual_id'] as String?;
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return e.toString().replaceFirst('Exception: ', '');
+    } finally {
+      _setLoading(false);
+    }
+  }
+
   Future<void> logout() async {
     await AuthService.logout();
     _isAuthenticated = false;
@@ -178,6 +203,7 @@ class AuthProvider extends ChangeNotifier {
     _virtualId = null;
     _username = null;
     _avatarUrl = null;
+    _phoneNumber = null;
     notifyListeners();
   }
 

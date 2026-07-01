@@ -1,16 +1,9 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
 
 const router = express.Router();
-
-function generateVirtualId() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let part = (n) => Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-  return `PGR-${part(4)}-${part(4)}`;
-}
 
 function signToken(userId) {
   return jwt.sign({ sub: userId }, process.env.JWT_SECRET, { expiresIn: '30d' });
@@ -19,29 +12,36 @@ function signToken(userId) {
 // POST /auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { username, password, public_key } = req.body;
-    if (!username || !password || !public_key) {
+    const { username, password, public_key, phone_number } = req.body;
+    if (!username || !password || !public_key || !phone_number) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-    let virtualId;
-    let attempts = 0;
-    // Ensure uniqueness
-    while (attempts < 10) {
-      virtualId = generateVirtualId();
-      const existing = await db.query('SELECT id FROM users WHERE virtual_id = $1', [virtualId]);
-      if (existing.rows.length === 0) break;
-      attempts++;
+    // Normalize E.164: strip leading zero from subscriber number (e.g. +25407... → +2547...)
+    phone_number = phone_number.replace(/^(\+\d{1,4})0+(\d)/, '$1$2');
+    if (!/^\+\d{7,15}$/.test(phone_number)) {
+      return res.status(400).json({ error: 'Invalid phone number format' });
     }
 
+    // Check phone uniqueness
+    const phoneCheck = await db.query(
+      'SELECT id FROM users WHERE phone_number = $1 OR virtual_id = $1',
+      [phone_number]
+    );
+    if (phoneCheck.rows.length > 0) {
+      return res.status(409).json({ error: 'Phone number already registered' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    // Phone number is the virtual_id for new accounts
+    const virtualId = phone_number;
+
     const result = await db.query(
-      `INSERT INTO users (virtual_id, username, password_hash, public_key)
-       VALUES ($1, $2, $3, $4) RETURNING id, virtual_id, username, public_key`,
-      [virtualId, username.trim(), passwordHash, public_key]
+      `INSERT INTO users (virtual_id, phone_number, username, password_hash, public_key)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id, virtual_id, phone_number, username, public_key`,
+      [virtualId, phone_number, username.trim(), passwordHash, public_key]
     );
     const user = result.rows[0];
     const token = signToken(user.id);
@@ -61,18 +61,32 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Missing credentials' });
     }
 
-    const result = await db.query(
-      'SELECT id, virtual_id, username, public_key, avatar_url, password_hash FROM users WHERE virtual_id = $1',
-      [virtual_id.toUpperCase()]
-    );
+    const isPhone = virtual_id.startsWith('+');
+    let result;
+    if (isPhone) {
+      // Phone number login — search phone_number column first, then virtual_id
+      result = await db.query(
+        `SELECT id, virtual_id, phone_number, username, public_key, avatar_url, password_hash
+         FROM users WHERE phone_number = $1 OR virtual_id = $1`,
+        [virtual_id]
+      );
+    } else {
+      // Legacy Pager ID login
+      result = await db.query(
+        `SELECT id, virtual_id, phone_number, username, public_key, avatar_url, password_hash
+         FROM users WHERE virtual_id = $1`,
+        [virtual_id.toUpperCase()]
+      );
+    }
+
     if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid Pager ID or password' });
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const user = result.rows[0];
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
-      return res.status(401).json({ error: 'Invalid Pager ID or password' });
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     await db.query('UPDATE users SET last_seen = NOW() WHERE id = $1', [user.id]);
@@ -127,7 +141,7 @@ router.post('/update-profile', require('./middleware').authenticate, async (req,
 
     const result = await db.query(
       `UPDATE users SET ${fields.join(', ')} WHERE id = $${values.length}
-       RETURNING id, virtual_id, username, avatar_url`,
+       RETURNING id, virtual_id, phone_number, username, avatar_url`,
       values
     );
     res.json(result.rows[0]);

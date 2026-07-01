@@ -16,8 +16,10 @@ import '../contacts/contacts_screen.dart';
 import '../groups/groups_list_screen.dart';
 import '../settings/settings_screen.dart';
 import '../../widgets/user_avatar.dart';
+import '../../../providers/auth_provider.dart';
 import '../../../providers/backup_provider.dart';
 import '../../../providers/groups_provider.dart';
+import '../settings/profile_edit_screen.dart';
 import 'package:intl/intl.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -413,6 +415,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+          // ── Phone number reminder banner ─────────────────────────────────────
+          if (!context.watch<AuthProvider>().hasPhoneNumber)
+            GestureDetector(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileEditScreen()),
+              ),
+              child: Container(
+                width: double.infinity,
+                color: const Color(0xFFE1B05C).withValues(alpha: 0.18),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(
+                  children: [
+                    const Icon(Icons.phone_android_rounded,
+                        color: Color(0xFFE1B05C), size: 18),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Add your phone number to secure your account',
+                        style: TextStyle(
+                          color: Color(0xFFE1B05C),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right_rounded,
+                        color: Color(0xFFE1B05C), size: 18),
+                  ],
+                ),
+              ),
+            ),
+
           Expanded(
             child: IndexedStack(
               index: _tab,

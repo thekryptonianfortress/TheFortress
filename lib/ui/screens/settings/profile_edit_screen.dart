@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl_phone_field/intl_phone_field.dart';
 import 'package:provider/provider.dart';
 import '../../../core/constants.dart';
 import '../../../core/theme.dart';
@@ -23,6 +24,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   late final TextEditingController _usernameCtrl;
   File? _pickedImage;
   bool _savingProfile = false;
+
+  // Phone section
+  String _newPhone = '';
+  bool _phoneValid = false;
+  bool _savingPhone = false;
+  bool _editingPhone = false;
 
   // Password section
   final _currentPassCtrl = TextEditingController();
@@ -217,6 +224,26 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       setState(() => _pickedImage = null);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Profile updated')),
+      );
+    }
+  }
+
+  Future<void> _savePhone() async {
+    if (!RegExp(r'^\+\d{7,15}$').hasMatch(_newPhone)) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Enter a valid phone number')));
+      return;
+    }
+    setState(() => _savingPhone = true);
+    final err = await context.read<AuthProvider>().linkPhoneNumber(_newPhone);
+    if (!mounted) return;
+    setState(() => _savingPhone = false);
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+    } else {
+      setState(() => _editingPhone = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Phone number updated successfully')),
       );
     }
   }
@@ -440,6 +467,123 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             child: Text(
               'This is the name shown to your contacts.',
               style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // ── Phone Number ─────────────────────────────────────
+          _sectionLabel('PHONE NUMBER'),
+          Builder(builder: (context) {
+            final auth = context.watch<AuthProvider>();
+            final localeCountry = WidgetsBinding
+                    .instance.platformDispatcher.locale.countryCode ??
+                'US';
+            if (auth.hasPhoneNumber && !_editingPhone) {
+              return Container(
+                color: AppTheme.surface,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.phone_rounded,
+                        color: AppTheme.primary, size: 18),
+                    const SizedBox(width: 12),
+                    Text(
+                      auth.phoneNumber!,
+                      style: const TextStyle(
+                          color: AppTheme.onSurface, fontSize: 15),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () => setState(() {
+                        _editingPhone = true;
+                        _newPhone = '';
+                        _phoneValid = false;
+                      }),
+                      child: const Text('Change',
+                          style: TextStyle(color: AppTheme.primary)),
+                    ),
+                  ],
+                ),
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  color: AppTheme.surface,
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: IntlPhoneField(
+                    decoration: const InputDecoration(
+                      hintText: 'Phone number',
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      filled: false,
+                      counterText: '',
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    initialCountryCode: localeCountry,
+                    onChanged: (phone) {
+                      // Strip leading zero from subscriber number (E.164 standard)
+                      final digits =
+                          phone.number.replaceFirst(RegExp(r'^0+'), '');
+                      // phone.countryCode already contains '+' (e.g. "+254")
+                      _newPhone = '${phone.countryCode}$digits';
+                    },
+                    style: const TextStyle(
+                        color: AppTheme.onSurface, fontSize: 15),
+                    dropdownTextStyle:
+                        const TextStyle(color: AppTheme.onSurface),
+                    flagsButtonPadding:
+                        const EdgeInsets.symmetric(horizontal: 4),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      if (auth.hasPhoneNumber) ...[
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => setState(() => _editingPhone = false),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                      ],
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _savingPhone ? null : _savePhone,
+                          child: _savingPhone
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white))
+                              : Text(auth.hasPhoneNumber
+                                  ? 'Update Number'
+                                  : 'Link Phone Number'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+            child: Text(
+              auth.hasPhoneNumber
+                  ? 'Your phone number is your primary Pager ID.'
+                  : 'Link your phone number to secure your account and make it easier for contacts to find you.',
+              style:
+                  const TextStyle(color: AppTheme.muted, fontSize: 12),
             ),
           ),
 

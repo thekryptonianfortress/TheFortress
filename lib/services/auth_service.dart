@@ -7,8 +7,9 @@ import '../data/local/secure_storage.dart';
 class AuthService {
   static final _base = AppConstants.serverBaseUrl;
 
-  /// Register a new virtual account. Returns session data on success.
-  static Future<Map<String, dynamic>> register(String username, String password) async {
+  /// Register a new account. Phone number becomes the virtual ID.
+  static Future<Map<String, dynamic>> register(
+      String username, String password, String phoneNumber) async {
     final keypair = await CryptoUtils.generateKeypair();
 
     final res = await http.post(
@@ -18,6 +19,7 @@ class AuthService {
         'username': username,
         'password': password,
         'public_key': keypair['publicKey'],
+        'phone_number': phoneNumber,
       }),
     ).timeout(const Duration(seconds: 15), onTimeout: () {
       throw Exception('Connection timed out. Check your network.');
@@ -36,6 +38,44 @@ class AuthService {
       username: data['user']['username'] as String,
       privateKey: keypair['privateKey']!,
       publicKey: keypair['publicKey']!,
+      phoneNumber: data['user']['phone_number'] as String?,
+    );
+    return data;
+  }
+
+  /// Link a phone number to an existing account.
+  /// Updates virtual_id to the phone number on the server and persists locally.
+  static Future<Map<String, dynamic>> linkPhoneNumber(String phoneNumber) async {
+    final token = await SecureStorage.getToken();
+    if (token == null) throw Exception('Not authenticated');
+
+    final res = await http.post(
+      Uri.parse('$_base/users/phone'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'phone_number': phoneNumber}),
+    ).timeout(const Duration(seconds: 15), onTimeout: () {
+      throw Exception('Connection timed out. Check your network.');
+    });
+
+    if (res.statusCode != 200) {
+      final body = jsonDecode(res.body);
+      throw Exception(body['error'] ?? 'Failed to update phone number');
+    }
+
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    await SecureStorage.savePhoneNumber(data['phone_number'] as String?);
+    await SecureStorage.saveSession(
+      token: token,
+      userId: data['id'] as String,
+      virtualId: data['virtual_id'] as String,
+      username: data['username'] as String,
+      privateKey: await SecureStorage.getPrivateKey() ?? '',
+      publicKey: await SecureStorage.getPublicKey() ?? '',
+      avatarUrl: data['avatar_url'] as String?,
+      phoneNumber: data['phone_number'] as String?,
     );
     return data;
   }

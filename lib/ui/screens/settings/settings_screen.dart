@@ -80,17 +80,22 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
               _SettingsTile(
-                icon: Icons.tag_rounded,
+                icon: auth.hasPhoneNumber
+                    ? Icons.phone_rounded
+                    : Icons.tag_rounded,
                 iconColor: AppTheme.primary,
-                title: 'Pager ID',
-                subtitle: virtualId,
+                title: auth.hasPhoneNumber ? 'Phone Number' : 'Pager ID',
+                subtitle: auth.hasPhoneNumber ? auth.phoneNumber : virtualId,
                 trailing: IconButton(
                   icon: const Icon(Icons.copy_rounded,
                       size: 16, color: AppTheme.muted),
                   onPressed: () {
-                    Clipboard.setData(ClipboardData(text: virtualId));
+                    final id = auth.hasPhoneNumber ? auth.phoneNumber! : virtualId;
+                    Clipboard.setData(ClipboardData(text: id));
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Pager ID copied')),
+                      SnackBar(content: Text(auth.hasPhoneNumber
+                          ? 'Phone number copied'
+                          : 'Pager ID copied')),
                     );
                   },
                 ),
