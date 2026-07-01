@@ -54,6 +54,7 @@ enum SignalingEvent {
   gcPeerEnded,
   groupCallMissed,
   callUpgradeAck,
+  callUpgraded, // 1:1 call upgraded by peer — auto-join the group call
 }
 
 class SignalingMessage {
@@ -232,6 +233,8 @@ class SignalingService {
         _emit(SignalingEvent.groupCallMissed, Map<String, dynamic>.from(data as Map)));
     _socket!.on('call-upgrade-ack', (data) =>
         _emit(SignalingEvent.callUpgradeAck, Map<String, dynamic>.from(data as Map)));
+    _socket!.on('call-upgraded', (data) =>
+        _emit(SignalingEvent.callUpgraded, Map<String, dynamic>.from(data as Map)));
   }
 
   void _emit(SignalingEvent event, Map<String, dynamic> data) {
@@ -334,6 +337,10 @@ class SignalingService {
 
   void sendGroupCallLeave(String groupId, String virtualId) {
     _socket?.emit('group-call-leave', {'group_id': groupId, 'virtual_id': virtualId});
+  }
+
+  void sendGroupCallInvite(String groupId, String targetVirtualId) {
+    _socket?.emit('group-call-invite', {'group_id': groupId, 'target_virtual_id': targetVirtualId});
   }
 
   void sendGcOffer({

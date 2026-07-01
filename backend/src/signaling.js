@@ -151,25 +151,45 @@ function setupSignaling(io) {
     try {
       for (const [gid, room] of groupCallRooms.entries()) {
         if (room.some(p => p.userId === userId)) continue; // already in call
-        const mc = await db.query(
-          `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
-          [gid, userId]
-        );
-        if (mc.rows.length === 0) continue;
         const meta = groupCallMeta.get(gid);
+        let isMember = false;
+        if (gid.startsWith('adhoc_')) {
+          // Adhoc calls: check invited members list stored in metadata
+          isMember = meta?.adhocMembers?.includes(userId) || false;
+        } else {
+          const mc = await db.query(
+            `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+            [gid, userId]
+          );
+          isMember = mc.rows.length > 0;
+        }
+        if (!isMember) continue;
         const starter = room[0];
-        socket.emit('group-call-incoming', {
-          group_id: gid,
-          group_name: meta?.groupName || 'Group',
-          is_video: meta?.isVideo || false,
-          caller_virtual_id: starter?.virtualId || '',
-          caller_username: starter?.username || '',
-        });
+        if (gid.startsWith('adhoc_')) {
+          // Adhoc group = this was a 1:1 call that got upgraded.
+          // B is likely still on the active-call screen — send call-upgraded so
+          // the app auto-transitions without requiring a manual accept tap.
+          socket.emit('call-upgraded', {
+            group_id: gid,
+            group_name: meta?.groupName || 'Group',
+            is_video: meta?.isVideo || false,
+            caller_virtual_id: starter?.virtualId || '',
+            caller_username: starter?.username || '',
+          });
+        } else {
+          socket.emit('group-call-incoming', {
+            group_id: gid,
+            group_name: meta?.groupName || 'Group',
+            is_video: meta?.isVideo || false,
+            caller_virtual_id: starter?.virtualId || '',
+            caller_username: starter?.username || '',
+          });
+        }
         // Remove any stored missed record — they now have a live invite
         await db.query(
           'DELETE FROM missed_group_calls WHERE user_id = $1 AND group_id = $2',
           [userId, gid]
-        );
+        ).catch(() => {});
       }
     } catch (e) {
       console.error('[group-call reconnect]', e.message);
@@ -182,14 +202,27 @@ function setupSignaling(io) {
         [userId]
       );
       for (const call of missedCalls.rows) {
-        socket.emit('group-call-missed', {
-          group_id: call.group_id,
-          group_name: call.group_name,
-          caller_virtual_id: call.caller_virtual_id,
-          caller_username: call.caller_username,
-          is_video: call.is_video,
-          started_at: call.created_at,
-        });
+        if (call.group_id.startsWith('adhoc_')) {
+          // Adhoc = was a 1:1 call upgrade. The call may still be active.
+          // Send call-upgraded so the app auto-transitions rather than showing a missed banner.
+          console.log(`[missed-group-calls] delivering call-upgraded for adhoc ${call.group_id} to userId=${userId}`);
+          socket.emit('call-upgraded', {
+            group_id: call.group_id,
+            group_name: call.group_name,
+            is_video: call.is_video,
+            caller_virtual_id: call.caller_virtual_id,
+            caller_username: call.caller_username,
+          });
+        } else {
+          socket.emit('group-call-missed', {
+            group_id: call.group_id,
+            group_name: call.group_name,
+            caller_virtual_id: call.caller_virtual_id,
+            caller_username: call.caller_username,
+            is_video: call.is_video,
+            started_at: call.created_at,
+          });
+        }
       }
       if (missedCalls.rows.length > 0) {
         await db.query('DELETE FROM missed_group_calls WHERE user_id = $1', [userId]);
@@ -202,11 +235,13 @@ function setupSignaling(io) {
 
     socket.on('call-offer', async (data) => {
       const { target_virtual_id, sdp, caller_username, caller_virtual_id, is_video } = data;
+      console.log(`[call-offer] from userId=${userId} caller_virtual_id=${caller_virtual_id} target=${target_virtual_id} is_video=${is_video}`);
       const target = await getUserByVirtualId(target_virtual_id);
-      if (!target) return;
+      if (!target) { console.log(`[call-offer] target not found: ${target_virtual_id}`); return; }
 
       const callId = makeCallId(userId, target.id);
       const targetSocketId = onlineUsers.get(target.id);
+      console.log(`[call-offer] target found id=${target.id} targetOnline=${!!targetSocketId}`);
 
       socket.emit('call-offer-ack', { call_id: callId, target_virtual_id, target_online: !!targetSocketId });
 
@@ -279,20 +314,57 @@ function setupSignaling(io) {
         const caller = callerRes.rows[0];
         const resolvedName = group_name || `${caller?.username || 'Someone'}'s Call`;
 
-        // End the 1:1 call for the existing peer and re-invite them to the group call
+        // Resolve the new participant first so we can build the full members list
+        const target = await getUserByVirtualId(add_virtual_id);
+
+        // Store adhoc group metadata NOW so group-call-start / group-call-join can bypass DB checks
+        const adhocMembers = [userId, peerId];
+        if (target) adhocMembers.push(target.id);
+        groupCallMeta.set(group_id, {
+          isVideo: !!is_video,
+          groupName: resolvedName,
+          adhocMembers,
+        });
+
+        // Seamlessly upgrade the existing peer into the group call.
+        // A single 'call-upgraded' event ends their 1:1 call and auto-joins
+        // them into the group call without requiring a manual accept.
+        console.log(`[call-upgrade] peerId=${peerId} peerSocket=${peerSocket} group_id=${group_id}`);
         if (peerSocket) {
-          io.to(peerSocket).emit('call-ended', { call_id });
-          io.to(peerSocket).emit('group-call-incoming', {
+          io.to(peerSocket).emit('call-upgraded', {
+            call_id,
             group_id,
             group_name: resolvedName,
             is_video: !!is_video,
             caller_virtual_id: caller?.virtual_id || '',
             caller_username: caller?.username || '',
           });
+          console.log(`[call-upgrade] sent call-upgraded to peerId=${peerId}`);
+        } else {
+          // Peer B's socket is offline (Android killed background TCP while WebRTC stayed alive).
+          // Store the invite so the reconnect handler delivers it when B comes back online.
+          // Also send FCM so the phone wakes up.
+          console.log(`[call-upgrade] peer ${peerId} is offline — storing pending invite`);
+          const peerRes = await db.query('SELECT fcm_token FROM users WHERE id = $1', [peerId]);
+          const peerFcmToken = peerRes.rows[0]?.fcm_token;
+          if (peerFcmToken) {
+            sendPushNotification(peerFcmToken, {
+              type: 'group_call_incoming',
+              group_id,
+              group_name: resolvedName,
+              caller_virtual_id: caller?.virtual_id || '',
+              caller_username: caller?.username || '',
+              is_video: String(!!is_video),
+            });
+          }
+          await db.query(
+            `INSERT INTO missed_group_calls (user_id, group_id, group_name, caller_virtual_id, caller_username, is_video)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [peerId, group_id, resolvedName, caller?.virtual_id || '', caller?.username || '', !!is_video]
+          ).catch(e => console.error('[call-upgrade missed_group_calls peer B]', e.message));
         }
 
         // Invite the new participant
-        const target = await getUserByVirtualId(add_virtual_id);
         if (target) {
           const targetSocket = onlineUsers.get(target.id);
           if (targetSocket) {
@@ -702,17 +774,39 @@ function setupSignaling(io) {
     socket.on('group-call-start', async (data) => {
       const { group_id, is_video, virtual_id, username } = data;
       try {
-        const mc = await db.query(
-          `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
-          [group_id, userId]
-        );
-        if (mc.rows.length === 0) return;
+        const isAdhoc = group_id.startsWith('adhoc_');
+
+        if (!isAdhoc) {
+          const mc = await db.query(
+            `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+            [group_id, userId]
+          );
+          if (mc.rows.length === 0) return;
+        }
 
         if (!groupCallRooms.has(group_id)) groupCallRooms.set(group_id, []);
         const room = groupCallRooms.get(group_id);
         const ei = room.findIndex(p => p.userId === userId);
         if (ei !== -1) room.splice(ei, 1);
         room.push({ userId, virtualId: virtual_id, username });
+
+        if (isAdhoc) {
+          // Metadata was set during call-upgrade; just update isVideo in case it differs
+          const existing = groupCallMeta.get(group_id) || {};
+          groupCallMeta.set(group_id, { ...existing, isVideo: !!is_video });
+
+          // Treat the caller's group-call-start like a join so they discover any
+          // participants who have already arrived (race-safe). Also notify those
+          // participants so they know A has entered the room.
+          const existingParticipants = room.slice(0, -1).map(p => ({ virtual_id: p.virtualId, username: p.username }));
+          socket.emit('group-call-joined', { group_id, participants: existingParticipants });
+          for (const p of room) {
+            if (p.userId === userId) continue;
+            const ps = onlineUsers.get(p.userId);
+            if (ps) io.to(ps).emit('group-call-member-joined', { group_id, virtual_id, username });
+          }
+          return;
+        }
 
         const groupRes = await db.query('SELECT name FROM groups WHERE id = $1', [group_id]);
         const groupName = groupRes.rows[0]?.name || 'Group';
@@ -753,11 +847,23 @@ function setupSignaling(io) {
     socket.on('group-call-join', async (data) => {
       const { group_id, virtual_id, username } = data;
       try {
-        const mc = await db.query(
-          `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
-          [group_id, userId]
-        );
-        if (mc.rows.length === 0) return;
+        console.log(`[group-call-join] userId=${userId} group_id=${group_id}`);
+        const isAdhoc = group_id.startsWith('adhoc_');
+        if (isAdhoc) {
+          // For adhoc calls, verify user is in the invited members list
+          const meta = groupCallMeta.get(group_id);
+          console.log(`[group-call-join] adhoc meta=${JSON.stringify(meta)} includes=${meta?.adhocMembers?.includes(userId)}`);
+          if (!meta?.adhocMembers?.includes(userId)) {
+            console.log(`[group-call-join] REJECTED — userId ${userId} not in adhocMembers`);
+            return;
+          }
+        } else {
+          const mc = await db.query(
+            `SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND status = 'active'`,
+            [group_id, userId]
+          );
+          if (mc.rows.length === 0) return;
+        }
 
         const room = groupCallRooms.get(group_id) || [];
         const existingParticipants = room.map(p => ({ virtual_id: p.virtualId, username: p.username }));
@@ -766,6 +872,7 @@ function setupSignaling(io) {
         room.push({ userId, virtualId: virtual_id, username });
         groupCallRooms.set(group_id, room);
 
+        console.log(`[group-call-join] sending group-call-joined with ${existingParticipants.length} existing participants to userId=${userId}`);
         socket.emit('group-call-joined', { group_id, participants: existingParticipants });
 
         for (const p of room) {
@@ -774,6 +881,42 @@ function setupSignaling(io) {
           if (ps) io.to(ps).emit('group-call-member-joined', { group_id, virtual_id, username });
         }
       } catch (e) { console.error('[group-call-join]', e.message); }
+    });
+
+    // Invite a new participant to an existing group call
+    socket.on('group-call-invite', async (data) => {
+      const { group_id, target_virtual_id } = data;
+      try {
+        const target = await getUserByVirtualId(target_virtual_id);
+        if (!target) return;
+        const meta = groupCallMeta.get(group_id);
+        const callerRes = await db.query('SELECT virtual_id, username FROM users WHERE id = $1', [userId]);
+        const caller = callerRes.rows[0];
+        const groupName = meta?.groupName || 'Group Call';
+        const isVideo = meta?.isVideo || false;
+
+        // Add target to adhoc members so they can join
+        if (group_id.startsWith('adhoc_') && meta) {
+          if (!meta.adhocMembers) meta.adhocMembers = [];
+          if (!meta.adhocMembers.includes(target.id)) meta.adhocMembers.push(target.id);
+        }
+
+        const targetSocket = onlineUsers.get(target.id);
+        if (targetSocket) {
+          io.to(targetSocket).emit('group-call-incoming', {
+            group_id, group_name: groupName, is_video: isVideo,
+            caller_virtual_id: caller?.virtual_id || '',
+            caller_username: caller?.username || '',
+          });
+        } else {
+          sendPushNotification(target.fcm_token, {
+            type: 'group_call_incoming', group_id, group_name: groupName,
+            caller_virtual_id: caller?.virtual_id || '',
+            caller_username: caller?.username || '',
+            is_video: String(isVideo),
+          });
+        }
+      } catch (e) { console.error('[group-call-invite]', e.message); }
     });
 
     socket.on('group-call-leave', (data) => {

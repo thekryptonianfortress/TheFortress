@@ -6,6 +6,7 @@ import '../../../core/theme.dart';
 import '../../../data/local/database.dart';
 import '../../../data/models/call_record.dart';
 import '../../../providers/call_provider.dart';
+import '../../../providers/group_call_provider.dart';
 import '../../../providers/contacts_provider.dart';
 import '../../../providers/messages_provider.dart';
 import 'dart:async';
@@ -44,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _subscribePresence();
       await context.read<ContactsProvider>().loadContacts();
       if (mounted) _checkPendingNotificationChat();
+      if (mounted) _checkPendingGroupCall();
       // Load backup settings and run scheduled backup if due
       if (mounted) {
         final backup = context.read<BackupProvider>();
@@ -117,6 +119,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (contact != null) {
       Navigator.pushNamed(context, '/chat', arguments: contact);
     }
+  }
+
+  void _checkPendingGroupCall() {
+    if (!NotificationService.pendingGroupCallOpen) return;
+    NotificationService.pendingGroupCallOpen = false;
+    Navigator.of(context).pushNamed('/call/group');
   }
 
   Future<void> _initLastCallsViewed() async {
@@ -194,6 +202,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     final callState = context.watch<CallProvider>().callState;
     final isCallActive = callState == CallState.active || callState == CallState.calling;
+    final gc = context.watch<GroupCallProvider>();
+
+    // Handle group call notification tap while home screen is already mounted
+    if (NotificationService.pendingGroupCallOpen) {
+      NotificationService.pendingGroupCallOpen = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pushNamed('/call/group');
+      });
+    }
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -291,6 +308,77 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
       body: Column(
         children: [
+          // ── Incoming group call banner ──────────────────────────────────────
+          if (gc.hasIncomingGroupCall)
+            GestureDetector(
+              onTap: () => Navigator.of(context).pushNamed('/call/group'),
+              child: Container(
+                width: double.infinity,
+                color: const Color(0xFF1E7E34),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(
+                      gc.incomingIsVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                      color: Colors.white, size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '${gc.incomingCallerName ?? 'Someone'} is calling — Tap to join',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: gc.declineGroupCall,
+                      child: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // ── Rejoin group call banner ────────────────────────────────────────
+          if (gc.canRejoin)
+            Container(
+              width: double.infinity,
+              color: AppTheme.primary.withValues(alpha: 0.92),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(
+                    gc.rejoinIsVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                    color: Colors.white, size: 18,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () async {
+                        await gc.rejoinCall();
+                        if (mounted) Navigator.of(context).pushNamed('/call/group');
+                      },
+                      child: Text(
+                        'Ongoing call: ${gc.rejoinGroupName ?? ''} — Tap to rejoin',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: gc.clearRejoin,
+                    child: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
+                  ),
+                ],
+              ),
+            ),
+
           // ── Active call banner (WhatsApp-style tap to return) ──────────────
           if (isCallActive)
             GestureDetector(

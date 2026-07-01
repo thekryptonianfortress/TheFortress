@@ -36,14 +36,14 @@ class _OutgoingCallScreenState extends State<OutgoingCallScreen>
       duration: const Duration(milliseconds: 1200),
     )..repeat();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      context.read<CallProvider>().startCall(
+      context.read<CallProvider>().addListener(_onStateChange);
+      await context.read<CallProvider>().startCall(
             targetVirtualId: widget.contact.virtualId,
             targetUsername: widget.contact.username,
             isVideo: widget.isVideo,
           );
-      context.read<CallProvider>().addListener(_onStateChange);
     });
   }
 

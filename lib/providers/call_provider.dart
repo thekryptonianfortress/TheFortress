@@ -39,6 +39,7 @@ class CallProvider extends ChangeNotifier {
   bool _isCameraOn = true;
   bool _hasRemoteStream = false;
   bool _upgradingToGroup = false;
+  Map<String, dynamic>? _pendingGroupJoin; // set when peer upgrades 1:1 to group call
   StreamSubscription<SignalingMessage>? _sigSub;
   StreamSubscription<CallState>? _stateSub;
   Timer? _callTimeoutTimer;
@@ -56,6 +57,7 @@ class CallProvider extends ChangeNotifier {
   bool get isCameraOn => _isCameraOn;
   bool get hasRemoteStream => _hasRemoteStream;
   bool get upgradingToGroup => _upgradingToGroup;
+  Map<String, dynamic>? get pendingGroupJoin => _pendingGroupJoin;
   String? get activePeerUsername => _activePeerUsername;
   String? get activePeerVirtualId => _activePeerVirtualId;
 
@@ -75,7 +77,7 @@ class CallProvider extends ChangeNotifier {
       if (_webrtc.activeCallId != null) {
         _signaling.sendCallEnd(_webrtc.activeCallId!);
       }
-      _saveCallRecord(CallStatus.completed);
+      _saveCallRecord(CallStatus.completed).catchError((_) {});
       _webrtc.endCall();
       _clearState();
     };
@@ -104,7 +106,7 @@ class CallProvider extends ChangeNotifier {
             _cancelCallTimeout();
             NotificationService.stopRingtone();
             NotificationService.cancelAll();
-            await _saveCallRecord(CallStatus.rejected);
+            _saveCallRecord(CallStatus.rejected).catchError((_) {});
             _clearCall();
           case SignalingEvent.callEnded:
             _cancelCallTimeout();
@@ -116,10 +118,10 @@ class CallProvider extends ChangeNotifier {
               _activePeerUsername = _incomingCall!.callerUsername;
               _callDirection = CallDirection.incoming;
               _incomingCall = null;
-              await _saveCallRecord(CallStatus.missed);
+              _saveCallRecord(CallStatus.missed).catchError((_) {});
             } else {
               _incomingCall = null;
-              await _saveCallRecord(CallStatus.completed);
+              _saveCallRecord(CallStatus.completed).catchError((_) {});
             }
             _webrtc.endCall();
             _clearState();
@@ -135,6 +137,20 @@ class CallProvider extends ChangeNotifier {
               msg.data['group_name'] as String? ?? 'Call',
               msg.data['is_video'] as bool? ?? false,
             );
+          case SignalingEvent.callUpgraded:
+            // The other party upgraded our 1:1 call to a group call.
+            // End the 1:1 call and auto-join the group call without requiring user input.
+            _cancelCallTimeout();
+            NotificationService.stopRingtone();
+            NotificationService.cancelAll();
+            _saveCallRecord(CallStatus.completed).catchError((_) {});
+            _pendingGroupJoin = {
+              'groupId': msg.data['group_id'] as String,
+              'groupName': msg.data['group_name'] as String? ?? 'Call',
+              'isVideo': msg.data['is_video'] as bool? ?? false,
+            };
+            _webrtc.endCall();
+            _clearState(); // notifyListeners() inside
           default:
             break;
         }
@@ -181,6 +197,7 @@ class CallProvider extends ChangeNotifier {
     print('[CallProvider] startCall isVideo=$isVideo');
     _isVideo = isVideo;
     _isCameraOn = true;
+    _resetPeerInfo();
     _activePeerVirtualId = targetVirtualId;
     _activePeerUsername = targetUsername;
     _callDirection = CallDirection.outgoing;
@@ -192,7 +209,15 @@ class CallProvider extends ChangeNotifier {
         notifyListeners();
       };
     }
-    final offerSdp = await _webrtc.startCall(targetVirtualId: targetVirtualId, isVideo: isVideo);
+    late final Map<String, dynamic> offerSdp;
+    try {
+      offerSdp = await _webrtc.startCall(targetVirtualId: targetVirtualId, isVideo: isVideo);
+    } catch (e) {
+      dev.log('[CallProvider] startCall failed (getUserMedia/permission): $e');
+      _webrtc.endCall();
+      _clearState();
+      return;
+    }
     if (isVideo) localRenderer.srcObject = _webrtc.localStream;
     final myUsername = await SecureStorage.getUsername() ?? '';
     final myVirtualId = await SecureStorage.getVirtualId() ?? '';
@@ -225,6 +250,7 @@ class CallProvider extends ChangeNotifier {
     final info = _incomingCall!;
     // ignore: avoid_print
     print('[CallProvider] answerCall isVideo=${info.isVideo}');
+    _resetPeerInfo();
     _activePeerVirtualId = info.callerVirtualId;
     _activePeerUsername = info.callerUsername;
     _callDirection = CallDirection.incoming;
@@ -337,8 +363,9 @@ class CallProvider extends ChangeNotifier {
   }
 
   void _clearState() {
-    _activePeerUsername = null;
-    _activePeerVirtualId = null;
+    // Preserve peer username/virtualId so the call screen can still display
+    // the correct name while it's transitioning away. They are reset on the
+    // next startCall() / answerCall().
     _isMuted = false;
     _isSpeakerOn = false;
     _isVideo = false;
@@ -350,6 +377,15 @@ class CallProvider extends ChangeNotifier {
     }
     _webrtc.onRemoteStream = null;
     notifyListeners();
+  }
+
+  void clearPendingGroupJoin() {
+    _pendingGroupJoin = null;
+  }
+
+  void _resetPeerInfo() {
+    _activePeerUsername = null;
+    _activePeerVirtualId = null;
   }
 
   Future<void> _saveCallRecord(CallStatus status) async {

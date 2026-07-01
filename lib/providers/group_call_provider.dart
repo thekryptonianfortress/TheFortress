@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer' as dev;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../data/local/secure_storage.dart';
 import '../services/signaling_service.dart';
 import '../services/notification_service.dart';
@@ -69,6 +70,11 @@ class GroupCallProvider extends ChangeNotifier {
   bool incomingIsVideo = false;
   String? incomingCallerName;
 
+  // Rejoin state — set when the user leaves a call that still has other participants
+  String? _rejoinGroupId;
+  String? _rejoinGroupName;
+  bool _rejoinIsVideo = false;
+
   bool get inCall => _inCall;
   bool get isMuted => _isMuted;
   bool get isCameraOn => _isCameraOn;
@@ -76,6 +82,9 @@ class GroupCallProvider extends ChangeNotifier {
   String? get groupId => _groupId;
   String? get groupName => _groupName;
   bool get hasIncomingGroupCall => incomingGroupId != null && !_inCall;
+  bool get canRejoin => _rejoinGroupId != null && !_inCall;
+  String? get rejoinGroupName => _rejoinGroupName;
+  bool get rejoinIsVideo => _rejoinIsVideo;
 
   List<GroupCallParticipant> get participants => _peers.values.map((p) => GroupCallParticipant(
     virtualId: p.virtualId,
@@ -92,6 +101,14 @@ class GroupCallProvider extends ChangeNotifier {
     _sigSub = _signaling.stream.listen((msg) async {
       try {
         switch (msg.event) {
+          case SignalingEvent.callUpgraded:
+            // The peer upgraded our 1:1 call to a group call.
+            // CallProvider handles the transition when we're in an active 1:1 call.
+            // If we're already idle (1:1 ended, or we reconnected late), surface it
+            // here so the home screen can show the group call join option.
+            if (!_inCall) {
+              _handleGroupCallIncoming(msg.data);
+            }
           case SignalingEvent.groupCallIncoming:
             _handleGroupCallIncoming(msg.data);
           case SignalingEvent.groupCallJoined:
@@ -182,6 +199,17 @@ class GroupCallProvider extends ChangeNotifier {
   }
 
   Future<void> _initLocalStream() async {
+    // Request permissions before attempting getUserMedia
+    if (_isVideo) {
+      final statuses = await [Permission.microphone, Permission.camera].request();
+      if (!statuses[Permission.microphone]!.isGranted || !statuses[Permission.camera]!.isGranted) {
+        throw Exception('Microphone/camera permission denied');
+      }
+    } else {
+      final status = await Permission.microphone.request();
+      if (!status.isGranted) throw Exception('Microphone permission denied');
+    }
+
     if (!_localRendererInit) {
       await localRenderer.initialize();
       _localRendererInit = true;
@@ -392,6 +420,11 @@ class GroupCallProvider extends ChangeNotifier {
     return pc;
   }
 
+  void inviteParticipant(String targetVirtualId) {
+    if (!_inCall || _groupId == null) return;
+    _signaling.sendGroupCallInvite(_groupId!, targetVirtualId);
+  }
+
   void toggleMute() {
     _isMuted = !_isMuted;
     _localStream?.getAudioTracks().forEach((t) => t.enabled = !_isMuted);
@@ -407,6 +440,11 @@ class GroupCallProvider extends ChangeNotifier {
 
   Future<void> leaveCall() async {
     if (!_inCall) return;
+    final hadPeers = _peers.isNotEmpty;
+    final savedGroupId = _groupId;
+    final savedGroupName = _groupName;
+    final savedIsVideo = _isVideo;
+
     if (_groupId != null && _myVirtualId != null) {
       _signaling.sendGroupCallLeave(_groupId!, _myVirtualId!);
       for (final peer in _peers.values) {
@@ -427,6 +465,30 @@ class GroupCallProvider extends ChangeNotifier {
     _groupName = null;
     _isMuted = false;
     _isCameraOn = true;
+
+    // Allow the user to rejoin if others are still in the call
+    if (hadPeers && savedGroupId != null) {
+      _rejoinGroupId = savedGroupId;
+      _rejoinGroupName = savedGroupName;
+      _rejoinIsVideo = savedIsVideo;
+    }
+
+    notifyListeners();
+  }
+
+  /// Rejoin the last group call the user left while it was still active.
+  Future<void> rejoinCall() async {
+    if (_rejoinGroupId == null) return;
+    final gid = _rejoinGroupId!;
+    final gname = _rejoinGroupName ?? 'Call';
+    final gvideo = _rejoinIsVideo;
+    _rejoinGroupId = null;
+    await joinCall(groupId: gid, groupName: gname, isVideo: gvideo);
+  }
+
+  /// Dismiss the rejoin banner without rejoining.
+  void clearRejoin() {
+    _rejoinGroupId = null;
     notifyListeners();
   }
 

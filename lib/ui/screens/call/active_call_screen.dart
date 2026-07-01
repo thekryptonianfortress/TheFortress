@@ -32,6 +32,9 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
   late final AnimationController _controlsFadeCtrl;
   late final Animation<double> _controlsFade;
 
+  // Guard: prevent duplicate navigation when state notifies multiple times
+  bool _handlingCallEnd = false;
+
   @override
   void initState() {
     super.initState();
@@ -39,7 +42,8 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
       if (mounted) setState(() => _seconds++);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<CallProvider>().onUpgradeToGroup = (groupId, groupName, isVideo) async {
+      final callProvider = context.read<CallProvider>();
+      callProvider.onUpgradeToGroup = (groupId, groupName, isVideo) async {
         final gc = context.read<GroupCallProvider>();
         await gc.startCall(groupId: groupId, groupName: groupName, isVideo: isVideo);
         if (mounted) {
@@ -48,6 +52,9 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
           );
         }
       };
+      // Listen for call-end / call-upgraded transitions — outside the builder
+      // so navigation fires exactly once regardless of how many rebuilds occur.
+      callProvider.addListener(_onCallStateChanged);
     });
 
     _reconnectCtrl = AnimationController(
@@ -65,6 +72,37 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
     _scheduleHide();
   }
 
+  void _onCallStateChanged() {
+    if (!mounted || _handlingCallEnd) return;
+    final call = context.read<CallProvider>();
+    if ((call.callState == CallState.idle || call.callState == CallState.ended)
+        && !call.upgradingToGroup) {
+      _handlingCallEnd = true;
+      _handleCallEnd(call);
+    }
+  }
+
+  Future<void> _handleCallEnd(CallProvider call) async {
+    final gc = context.read<GroupCallProvider>();
+    final joinInfo = call.pendingGroupJoin;
+    if (joinInfo != null) {
+      // Our 1:1 was upgraded by the peer — auto-join the group call.
+      call.clearPendingGroupJoin();
+      try {
+        await gc.joinCall(
+          groupId: joinInfo['groupId'] as String,
+          groupName: joinInfo['groupName'] as String,
+          isVideo: joinInfo['isVideo'] as bool,
+        );
+      } catch (_) {}
+      if (mounted) Navigator.of(context).pushReplacementNamed('/call/group');
+    } else if (gc.hasIncomingGroupCall) {
+      if (mounted) Navigator.of(context).pushReplacementNamed('/call/group');
+    } else {
+      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    }
+  }
+
   @override
   void dispose() {
     _durationTimer?.cancel();
@@ -72,6 +110,7 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
     _reconnectCtrl.dispose();
     _controlsFadeCtrl.dispose();
     final cp = context.read<CallProvider>();
+    cp.removeListener(_onCallStateChanged);
     // If we're mid-upgrade, clean up the 1:1 WebRTC side now that we've navigated away
     if (cp.upgradingToGroup) cp.finishUpgrade();
     cp.onUpgradeToGroup = null;
@@ -179,13 +218,6 @@ class _ActiveCallScreenState extends State<ActiveCallScreen>
   Widget build(BuildContext context) {
     return Consumer<CallProvider>(
       builder: (context, call, _) {
-        if ((call.callState == CallState.idle || call.callState == CallState.ended)
-            && !call.upgradingToGroup) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
-          });
-        }
-
         final peerName = call.activePeerUsername ?? 'Unknown';
         final peerAvatar = context
             .read<ContactsProvider>()

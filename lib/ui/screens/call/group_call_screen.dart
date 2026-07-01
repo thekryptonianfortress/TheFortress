@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme.dart';
+import '../../../providers/contacts_provider.dart';
 import '../../../providers/group_call_provider.dart';
 import '../../widgets/user_avatar.dart';
 
@@ -119,13 +120,13 @@ class _IncomingGroupCallScreen extends StatelessWidget {
                       icon: gc.incomingIsVideo ? Icons.videocam_rounded : Icons.call_rounded,
                       label: 'Join',
                       color: AppTheme.accent,
-                      onTap: () {
-                        gc.joinCall(
+                      onTap: () async {
+                        await gc.joinCall(
                           groupId: gc.incomingGroupId!,
                           groupName: gc.incomingGroupName!,
                           isVideo: gc.incomingIsVideo,
                         );
-                        // Screen rebuilds to in-call layout
+                        // Screen rebuilds to in-call layout once notifyListeners fires
                       },
                     ),
                   ],
@@ -216,6 +217,13 @@ class _AudioGroupCallScreen extends StatelessWidget {
                       active: gc.isMuted,
                       activeColor: AppTheme.primary,
                       onTap: gc.toggleMute,
+                    ),
+                    _ControlButton(
+                      icon: Icons.person_add_rounded,
+                      label: 'Add',
+                      active: false,
+                      activeColor: AppTheme.primary,
+                      onTap: () => _showAddParticipantSheet(context, gc),
                     ),
                     _EndButton(onTap: () {
                       gc.leaveCall();
@@ -366,6 +374,13 @@ class _VideoGroupCallScreen extends StatelessWidget {
                         activeColor: Colors.red,
                         onTap: gc.toggleCamera,
                       ),
+                      _ControlButton(
+                        icon: Icons.person_add_rounded,
+                        label: 'Add',
+                        active: false,
+                        activeColor: AppTheme.primary,
+                        onTap: () => _showAddParticipantSheet(context, gc),
+                      ),
                       _EndButton(onTap: () {
                         gc.leaveCall();
                         Navigator.of(context).pop();
@@ -511,6 +526,68 @@ class _ControlButton extends StatelessWidget {
       ],
     );
   }
+}
+
+void _showAddParticipantSheet(BuildContext context, GroupCallProvider gc) {
+  final currentVirtualIds = {
+    ...gc.participants.map((p) => p.virtualId),
+  };
+  final contacts = context.read<ContactsProvider>().contacts
+      .where((c) => !currentVirtualIds.contains(c.virtualId))
+      .toList();
+
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: const Color(0xFF111827),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 8),
+        Container(width: 40, height: 4, decoration: BoxDecoration(
+          color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(height: 16),
+        const Text('Add to Call',
+            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 12),
+        if (contacts.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Text('No other contacts available',
+                style: TextStyle(color: AppTheme.muted)),
+          )
+        else
+          Flexible(
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: contacts.length,
+              itemBuilder: (_, i) {
+                final c = contacts[i];
+                return ListTile(
+                  leading: UserAvatar(username: c.username, radius: 20, fontSize: 15),
+                  title: Text(c.username,
+                      style: const TextStyle(color: Colors.white, fontSize: 15)),
+                  onTap: () {
+                    gc.inviteParticipant(c.virtualId);
+                    Navigator.of(context).pop();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Inviting ${c.username}…'),
+                        duration: const Duration(seconds: 2),
+                        backgroundColor: AppTheme.primary,
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 16),
+      ],
+    ),
+  );
 }
 
 class _EndButton extends StatelessWidget {

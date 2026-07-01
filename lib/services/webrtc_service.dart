@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
 import 'signaling_service.dart';
@@ -322,6 +323,10 @@ class WebRTCService {
   }
 
   Future<MediaStream> _getLocalAudio() async {
+    final status = await Permission.microphone.request();
+    if (!status.isGranted) {
+      throw Exception('Microphone permission denied');
+    }
     return navigator.mediaDevices.getUserMedia({
       'audio': {'echoCancellation': true, 'noiseSuppression': true, 'autoGainControl': true},
       'video': false,
@@ -329,6 +334,13 @@ class WebRTCService {
   }
 
   Future<MediaStream> _getLocalVideo() async {
+    final statuses = await [Permission.microphone, Permission.camera].request();
+    if (!statuses[Permission.microphone]!.isGranted) {
+      throw Exception('Microphone permission denied');
+    }
+    if (!statuses[Permission.camera]!.isGranted) {
+      throw Exception('Camera permission denied');
+    }
     return navigator.mediaDevices.getUserMedia({
       'audio': {'echoCancellation': true, 'noiseSuppression': true, 'autoGainControl': true},
       'video': {'facingMode': 'user', 'width': 640, 'height': 480},

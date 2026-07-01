@@ -160,12 +160,17 @@ class _IncomingCallListenerState extends State<_IncomingCallListener> {
 
     // ── Incoming group call → push /call/group (which shows accept/decline) ──
     if (groupCall.hasIncomingGroupCall && !_groupIncomingPushed) {
-      _groupIncomingPushed = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _navigatorKey.currentState
-            ?.pushNamed('/call/group')
-            .then((_) => _groupIncomingPushed = false);
-      });
+      // If the user is in an active 1:1 call, ActiveCallScreen handles the
+      // transition to the group call screen itself (via pushReplacementNamed).
+      // Pushing here would race with that and produce a duplicate route.
+      if (_routeTracker.currentRouteName != '/call/active') {
+        _groupIncomingPushed = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _navigatorKey.currentState
+              ?.pushNamed('/call/group')
+              .then((_) => _groupIncomingPushed = false);
+        });
+      }
     }
     if (!groupCall.hasIncomingGroupCall && _groupIncomingPushed) {
       _groupIncomingPushed = false;

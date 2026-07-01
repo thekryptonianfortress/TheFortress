@@ -25,6 +25,9 @@ class NotificationService {
   /// Called with (senderVirtualId, replyText).
   static Function(String senderVirtualId, String replyText)? onMessageReply;
 
+  /// Set to true when a group call notification is tapped — home screen navigates to the call.
+  static bool pendingGroupCallOpen = false;
+
   /// Virtual ID of the contact whose chat should be opened when app comes to foreground.
   static String? pendingOpenChatVirtualId;
 
@@ -152,14 +155,17 @@ class NotificationService {
       return;
     }
     if (action == 'msg_reply' || response.actionId == null) {
-      // Notification body or Reply tapped — open the chat
+      // Notification body or Reply tapped — open the chat / group call
       final payload = response.payload ?? '';
       if (payload.isNotEmpty) {
         try {
           final data = jsonDecode(payload) as Map<String, dynamic>;
-          final virtualId = data['sender_virtual_id'] as String? ?? '';
-          if (virtualId.isNotEmpty) {
-            pendingOpenChatVirtualId = virtualId;
+          final type = data['type'] as String? ?? '';
+          if (type == 'group_call') {
+            pendingGroupCallOpen = true;
+          } else {
+            final virtualId = data['sender_virtual_id'] as String? ?? '';
+            if (virtualId.isNotEmpty) pendingOpenChatVirtualId = virtualId;
           }
         } catch (_) {}
       }
@@ -239,6 +245,7 @@ class NotificationService {
             category: AndroidNotificationCategory.call,
           ),
         ),
+        payload: jsonEncode({'type': 'group_call'}),
       );
     } catch (e) {
       dev.log('[NotificationService] showGroupCallNotification error: $e');
