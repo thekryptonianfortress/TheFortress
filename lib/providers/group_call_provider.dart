@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as dev;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../core/constants.dart';
 import '../data/local/secure_storage.dart';
 import '../services/signaling_service.dart';
 import '../services/notification_service.dart';
@@ -375,12 +378,28 @@ class GroupCallProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<List<Map<String, dynamic>>> _getIceServers() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString(AppConstants.iceServersCacheKey);
+    final expiry = prefs.getInt(AppConstants.iceServersCacheExpiryKey) ?? 0;
+
+    if (cached != null && DateTime.now().millisecondsSinceEpoch < expiry) {
+      final list = jsonDecode(cached) as List;
+      return list.map((e) {
+        final map = Map<String, dynamic>.from(e as Map);
+        if (map['urls'] is List) {
+          map['urls'] = (map['urls'] as List).map((u) => u.toString()).toList();
+        }
+        return map;
+      }).toList();
+    }
+    return AppConstants.defaultIceServers;
+  }
+
   Future<RTCPeerConnection> _createPeerConnection(_GroupPeer peer) async {
+    final iceServers = await _getIceServers();
     final pc = await createPeerConnection({
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},
-        {'urls': 'stun:stun1.l.google.com:19302'},
-      ],
+      'iceServers': iceServers,
       'sdpSemantics': 'plan-b',
       'iceTransportPolicy': 'all',
     });

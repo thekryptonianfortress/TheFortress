@@ -35,6 +35,19 @@ async function initDb() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS pending_calls (
+      id SERIAL PRIMARY KEY,
+      call_id TEXT NOT NULL UNIQUE,
+      caller_id TEXT NOT NULL,
+      callee_id TEXT NOT NULL,
+      caller_virtual_id TEXT,
+      caller_username TEXT,
+      sdp JSONB,
+      is_video BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
 }
 
 function setupSignaling(io) {
@@ -146,6 +159,39 @@ function setupSignaling(io) {
       }
     }
 
+    // ── Pending 1:1 call re-delivery ──────────────────────────────
+    // If a call offer was sent while this user's socket was dead (Android kills
+    // background TCP), re-deliver it now as long as it is fresh (< 90 s) and
+    // the caller is still connected and waiting.
+    try {
+      const pendingCallRes = await db.query(
+        `SELECT * FROM pending_calls WHERE callee_id = $1
+         AND created_at > NOW() - INTERVAL '90 seconds'
+         ORDER BY created_at DESC LIMIT 1`,
+        [userId]
+      );
+      if (pendingCallRes.rows.length > 0) {
+        const pc = pendingCallRes.rows[0];
+        const callerStillOnline = onlineUsers.has(pc.caller_id);
+        if (callerStillOnline) {
+          console.log(`[pending-call] re-delivering call_id=${pc.call_id} to userId=${userId}`);
+          socket.emit('incoming-call', {
+            call_id: pc.call_id,
+            caller_id: pc.caller_id,
+            caller_virtual_id: pc.caller_virtual_id,
+            caller_username: pc.caller_username,
+            sdp: pc.sdp,
+            is_video: pc.is_video,
+          });
+        } else {
+          // Caller is gone — clean up
+          await db.query('DELETE FROM pending_calls WHERE call_id = $1', [pc.call_id]).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.error('[pending-call delivery]', e.message);
+    }
+
     // ── Group call reconnect handling ───────────────────────────
     // If a group call is still active, re-invite the user to join
     try {
@@ -245,6 +291,16 @@ function setupSignaling(io) {
 
       socket.emit('call-offer-ack', { call_id: callId, target_virtual_id, target_online: !!targetSocketId });
 
+      // Store the offer so it can be re-delivered if the callee's socket is dead
+      // (Android kills TCP while WebRTC UDP stays alive — the socket entry in
+      // onlineUsers becomes stale and the emit would go to a dead socket).
+      await db.query(
+        `INSERT INTO pending_calls (call_id, caller_id, callee_id, caller_virtual_id, caller_username, sdp, is_video)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (call_id) DO NOTHING`,
+        [callId, userId, target.id, caller_virtual_id, caller_username, JSON.stringify(sdp), !!is_video]
+      ).catch(e => console.error('[pending_calls insert]', e.message));
+
       if (targetSocketId) {
         io.to(targetSocketId).emit('incoming-call', {
           call_id: callId,
@@ -254,6 +310,9 @@ function setupSignaling(io) {
           sdp,
           is_video: !!is_video,
         });
+        // Also send FCM as a wakeup — if the socket entry is stale (TCP dead
+        // but onlineUsers still has it), FCM will wake the device and trigger
+        // a socket reconnect, at which point the pending_calls record is delivered.
         sendPushNotification(target.fcm_token, {
           type: 'incoming_call',
           call_id: callId,
@@ -262,7 +321,8 @@ function setupSignaling(io) {
         });
       } else {
         sendPushNotification(target.fcm_token, {
-          type: 'missed_call',
+          type: 'incoming_call',
+          call_id: callId,
           caller_username,
           caller_virtual_id,
         });
@@ -274,6 +334,7 @@ function setupSignaling(io) {
       const { callerId } = parseCallId(call_id);
       const callerSocket = onlineUsers.get(callerId);
       if (callerSocket) io.to(callerSocket).emit('call-answered', { call_id, sdp });
+      db.query('DELETE FROM pending_calls WHERE call_id = $1', [call_id]).catch(() => {});
     });
 
     socket.on('call-reject', (data) => {
@@ -281,6 +342,7 @@ function setupSignaling(io) {
       const { callerId } = parseCallId(call_id);
       const callerSocket = onlineUsers.get(callerId);
       if (callerSocket) io.to(callerSocket).emit('call-rejected', { call_id });
+      db.query('DELETE FROM pending_calls WHERE call_id = $1', [call_id]).catch(() => {});
     });
 
     socket.on('call-end', (data) => {
@@ -290,6 +352,7 @@ function setupSignaling(io) {
         const s = onlineUsers.get(uid);
         if (s && s !== socket.id) io.to(s).emit('call-ended', { call_id });
       });
+      db.query('DELETE FROM pending_calls WHERE call_id = $1', [call_id]).catch(() => {});
     });
 
     socket.on('ice-candidate', (data) => {

@@ -266,6 +266,10 @@ class WebRTCService {
     }
     _pendingRemoteCandidates.clear();
 
+    // ICE candidates sent while callee's socket was dead are lost.
+    // Restart ICE so both sides re-gather and exchange fresh candidates.
+    _pc?.restartIce();
+
     _callStartTime = DateTime.now();
     _setState(CallState.active);
   }
