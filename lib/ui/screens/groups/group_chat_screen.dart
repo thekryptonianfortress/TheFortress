@@ -20,7 +20,6 @@ import '../../../data/models/contact.dart';
 import '../../../data/models/group.dart';
 import '../../../data/models/group_message.dart';
 import '../../../providers/contacts_provider.dart';
-import '../../../providers/group_call_provider.dart';
 import '../../../providers/groups_provider.dart';
 import '../../../providers/messages_provider.dart';
 import '../../../services/media_service.dart';
@@ -688,30 +687,6 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                 ),
               ],
             ),
-          IconButton(
-            icon: const Icon(Icons.call_rounded, color: AppTheme.onSurface),
-            tooltip: 'Voice call',
-            onPressed: () {
-              context.read<GroupCallProvider>().startCall(
-                groupId: group.id,
-                groupName: group.name,
-                isVideo: false,
-              );
-              Navigator.pushNamed(context, '/call/group');
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.videocam_rounded, color: AppTheme.onSurface),
-            tooltip: 'Video call',
-            onPressed: () {
-              context.read<GroupCallProvider>().startCall(
-                groupId: group.id,
-                groupName: group.name,
-                isVideo: true,
-              );
-              Navigator.pushNamed(context, '/call/group');
-            },
-          ),
           IconButton(
             icon: const Icon(Icons.search_rounded, color: AppTheme.onSurface),
             tooltip: 'Search',
