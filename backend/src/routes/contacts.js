@@ -23,15 +23,15 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// POST /contacts  — add by virtual_id
+// POST /contacts  — add by phone number
 router.post('/', authenticate, async (req, res) => {
   try {
-    const { virtual_id } = req.body;
-    if (!virtual_id) return res.status(400).json({ error: 'virtual_id required' });
+    const { phone_number } = req.body;
+    if (!phone_number) return res.status(400).json({ error: 'phone_number required' });
 
     const userResult = await db.query(
-      'SELECT id, virtual_id, username, public_key, last_seen FROM users WHERE virtual_id = $1',
-      [virtual_id.toUpperCase()]
+      'SELECT id, virtual_id, username, public_key, last_seen FROM users WHERE phone_number = $1 OR virtual_id = $1',
+      [phone_number]
     );
     if (userResult.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });

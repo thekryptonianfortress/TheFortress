@@ -88,7 +88,7 @@ class SyncService {
   }
 
   /// Add a contact on server and cache locally.
-  Future<Contact?> addContact(String virtualId) async {
+  Future<Contact?> addContact(String phoneNumber) async {
     final token = await SecureStorage.getToken();
     final myId = await SecureStorage.getUserId();
     if (token == null || myId == null) return null;
@@ -99,7 +99,7 @@ class SyncService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
       },
-      body: jsonEncode({'virtual_id': virtualId}),
+      body: jsonEncode({'phone_number': phoneNumber}),
     );
 
     if (res.statusCode != 201) {

@@ -19,7 +19,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
   }
 
   Future<void> _add() async {
-    final id = _ctrl.text.trim().toUpperCase();
+    final id = _ctrl.text.trim();
     if (id.isEmpty) return;
     final provider = context.read<ContactsProvider>();
     final ok = await provider.addContact(id);
@@ -43,16 +43,17 @@ class _AddContactScreenState extends State<AddContactScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Enter the Pager ID of the person you want to add.',
+              'Enter the phone number of the person you want to add. Use international format (e.g. +254712345678).',
               style: TextStyle(color: AppTheme.muted),
             ),
             const SizedBox(height: 24),
             TextField(
               controller: _ctrl,
-              textCapitalization: TextCapitalization.characters,
+              keyboardType: TextInputType.phone,
               decoration: const InputDecoration(
-                labelText: 'Pager ID  (e.g. PGR-A1B2-C3D4)',
-                prefixIcon: Icon(Icons.badge_outlined),
+                labelText: 'Phone Number',
+                hintText: '+254712345678',
+                prefixIcon: Icon(Icons.phone_outlined),
               ),
             ),
             if (provider.error != null) ...[
