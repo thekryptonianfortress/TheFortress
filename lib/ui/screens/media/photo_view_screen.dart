@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // kept for SystemUiOverlayStyle
+import '../../../services/media_service.dart';
 
 class PhotoViewScreen extends StatefulWidget {
   final String url;
@@ -22,10 +24,16 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
   final _transformController = TransformationController();
   bool _showUi = true;
   TapDownDetails? _lastDoubleTapDetails;
+  File? _localFile;
 
   @override
   void initState() {
     super.initState();
+    if (widget.caption != null) {
+      MediaService.getCachedFile(widget.caption!).then((f) {
+        if (mounted && f != null) setState(() => _localFile = f);
+      });
+    }
   }
 
   @override
@@ -33,6 +41,17 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
     _transformController.dispose();
     super.dispose();
   }
+
+  Widget _networkImage() => CachedNetworkImage(
+        imageUrl: widget.url,
+        fit: BoxFit.contain,
+        placeholder: (_, __) => const Center(
+          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+        ),
+        errorWidget: (_, __, ___) => const Center(
+          child: Icon(Icons.broken_image_rounded, color: Colors.white38, size: 64),
+        ),
+      );
 
   void _handleDoubleTap() {
     if (_transformController.value != Matrix4.identity()) {
@@ -85,18 +104,13 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
               transformationController: _transformController,
               minScale: 0.5,
               maxScale: 6.0,
-              child: CachedNetworkImage(
-                imageUrl: widget.url,
-                fit: BoxFit.contain,
-                placeholder: (_, __) => const Center(
-                  child: CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 2),
-                ),
-                errorWidget: (_, __, ___) => const Center(
-                  child: Icon(Icons.broken_image_rounded,
-                      color: Colors.white38, size: 64),
-                ),
-              ),
+              child: _localFile != null
+                  ? Image.file(
+                      _localFile!,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => _networkImage(),
+                    )
+                  : _networkImage(),
             ),
           ),
         ),

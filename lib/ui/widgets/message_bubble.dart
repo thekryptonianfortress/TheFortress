@@ -457,41 +457,10 @@ class _MessageBubbleState extends State<MessageBubble>
       final heroTag = 'media_${msg.id}';
 
       if (type == 'image' || type == 'gif') {
-        attachmentWidget = GestureDetector(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => PhotoViewScreen(
-                url: url,
-                heroTag: heroTag,
-                caption: filename,
-              ),
-            ),
-          ),
-          child: Hero(
-            tag: heroTag,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: CachedNetworkImage(
-                imageUrl: url,
-                width: 220,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => const SizedBox(
-                  width: 220,
-                  height: 160,
-                  child: Center(
-                      child: CircularProgressIndicator(strokeWidth: 2)),
-                ),
-                errorWidget: (_, __, ___) => const SizedBox(
-                  width: 220,
-                  height: 80,
-                  child: Center(
-                      child: Icon(Icons.broken_image_rounded,
-                          color: Colors.white54)),
-                ),
-              ),
-            ),
-          ),
+        attachmentWidget = _ImageBubble(
+          url: url,
+          filename: filename,
+          heroTag: heroTag,
         );
       } else if (type == 'video') {
         attachmentWidget = _VideoThumbnailBubble(
@@ -630,6 +599,88 @@ class _MessageBubbleState extends State<MessageBubble>
       builder: (_) => _FileDownloadDialog(url: url, filename: filename),
     );
   }
+}
+
+// ── Local-first image bubble ─────────────────────────────────
+
+class _ImageBubble extends StatefulWidget {
+  final String url;
+  final String filename;
+  final String heroTag;
+
+  const _ImageBubble({
+    required this.url,
+    required this.filename,
+    required this.heroTag,
+  });
+
+  @override
+  State<_ImageBubble> createState() => _ImageBubbleState();
+}
+
+class _ImageBubbleState extends State<_ImageBubble> {
+  File? _localFile;
+  bool _checked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveLocal();
+  }
+
+  Future<void> _resolveLocal() async {
+    final file = await MediaService.getCachedFile(widget.filename);
+    if (mounted) setState(() { _localFile = file; _checked = true; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PhotoViewScreen(
+            url: widget.url,
+            heroTag: widget.heroTag,
+            caption: widget.filename,
+          ),
+        ),
+      ),
+      child: Hero(
+        tag: widget.heroTag,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: !_checked
+              ? const SizedBox(
+                  width: 220, height: 160,
+                  child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                )
+              : _localFile != null
+                  ? Image.file(
+                      _localFile!,
+                      width: 220,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _networkImage(),
+                    )
+                  : _networkImage(),
+        ),
+      ),
+    );
+  }
+
+  Widget _networkImage() => CachedNetworkImage(
+        imageUrl: widget.url,
+        width: 220,
+        fit: BoxFit.cover,
+        placeholder: (_, __) => const SizedBox(
+          width: 220, height: 160,
+          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        ),
+        errorWidget: (_, __, ___) => const SizedBox(
+          width: 220, height: 80,
+          child: Center(child: Icon(Icons.broken_image_rounded, color: Colors.white54)),
+        ),
+      );
 }
 
 // ── Tail painter ────────────────────────────────────────────

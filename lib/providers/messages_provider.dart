@@ -9,6 +9,7 @@ import '../data/local/secure_storage.dart';
 import '../data/models/message.dart';
 import '../services/lan_transport.dart';
 import '../services/messaging_service.dart';
+import '../services/media_service.dart';
 import '../services/notification_service.dart';
 import '../services/signaling_service.dart';
 
@@ -200,6 +201,13 @@ class MessagesProvider extends ChangeNotifier {
         ? DateTime.tryParse(data['created_at'] as String) ?? DateTime.now()
         : DateTime.now();
 
+    final attachmentUrl = data['attachment_url'] as String?;
+    final attachmentType = data['attachment_type'] as String?;
+    final attachmentName = data['attachment_name'] as String?;
+    final attachmentSize = data['attachment_size'] != null
+        ? (data['attachment_size'] as num).toInt()
+        : null;
+
     final msg = Message(
       id: data['message_id'] as String,
       senderId: senderId,
@@ -210,6 +218,10 @@ class MessagesProvider extends ChangeNotifier {
       createdAt: createdAt,
       isOutgoing: false,
       replyToId: data['reply_to_id'] as String?,
+      attachmentUrl: attachmentUrl,
+      attachmentType: attachmentType,
+      attachmentName: attachmentName,
+      attachmentSize: attachmentSize,
     );
 
     // No encryption — content is plaintext
@@ -217,6 +229,16 @@ class MessagesProvider extends ChangeNotifier {
     // Use merge strategy so server re-delivery never overwrites LAN-period edits,
     // deletes, or reactions already stored in the local DB.
     await _db.upsertMessageFromServer(msg);
+
+    // Proactively cache images and audio so they're accessible offline.
+    // Fire-and-forget — silently ignored if the download fails (e.g. offline).
+    if (attachmentUrl != null && attachmentName != null &&
+        (attachmentType == 'image' || attachmentType == 'gif' || attachmentType == 'audio')) {
+      MediaService.downloadFile(
+        MediaService.fullUrl(attachmentUrl),
+        attachmentName,
+      ).catchError((_) {});
+    }
 
     final existing = _chats[senderId] ?? [];
     if (!existing.any((m) => m.id == msg.id)) {

@@ -155,10 +155,10 @@ class MediaService {
     final fullUrl =
         url.startsWith('http') ? url : '${AppConstants.serverBaseUrl}$url';
 
-    final dir = await getTemporaryDirectory();
-    // Use a unique subdirectory to avoid name collisions across chats
+    final dir = await getApplicationDocumentsDirectory();
+    // Persistent subdirectory — not cleared by Android unlike getTemporaryDirectory()
     final cacheDir = Directory('${dir.path}/pager_media');
-    if (!cacheDir.existsSync()) cacheDir.createSync();
+    if (!cacheDir.existsSync()) cacheDir.createSync(recursive: true);
     final dest = File('${cacheDir.path}/${_safeFilename(filename)}');
 
     if (dest.existsSync()) {
@@ -218,9 +218,16 @@ class MediaService {
 
   /// Check if a file is already in the local cache.
   static Future<bool> isCached(String filename) async {
-    final dir = await getTemporaryDirectory();
+    final dir = await getApplicationDocumentsDirectory();
     return File('${dir.path}/pager_media/${_safeFilename(filename)}')
         .existsSync();
+  }
+
+  /// Returns the cached [File] if it exists locally, or null.
+  static Future<File?> getCachedFile(String filename) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File('${dir.path}/pager_media/${_safeFilename(filename)}');
+    return file.existsSync() ? file : null;
   }
 
   /// Download then open with system handler (for generic files).
