@@ -193,7 +193,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Add someone by their Pager ID',
+              'Add someone by their phone number',
               style: TextStyle(color: AppTheme.muted, fontSize: 14),
             ),
             const SizedBox(height: 24),
