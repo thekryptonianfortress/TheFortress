@@ -1,9 +1,7 @@
-import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:share_plus/share_plus.dart';
 import '../../../core/theme.dart';
 import '../../../providers/backup_provider.dart';
 
@@ -15,21 +13,6 @@ class BackupScreen extends StatefulWidget {
 }
 
 class _BackupScreenState extends State<BackupScreen> {
-  List<File> _savedBackups = [];
-  bool _loadingList = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _refreshList();
-  }
-
-  Future<void> _refreshList() async {
-    setState(() => _loadingList = true);
-    _savedBackups = await context.read<BackupProvider>().listBackups();
-    if (mounted) setState(() => _loadingList = false);
-  }
-
   Future<void> _backupNow() async {
     final provider = context.read<BackupProvider>();
     final file = await provider.runBackup();
@@ -38,19 +21,11 @@ class _BackupScreenState extends State<BackupScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Backup created successfully')),
       );
-      await _refreshList();
     } else if (provider.error != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Backup failed: ${provider.error}')),
       );
     }
-  }
-
-  Future<void> _exportBackup(File file) async {
-    await Share.shareXFiles(
-      [XFile(file.path)],
-      subject: 'Pager Backup',
-    );
   }
 
   Future<void> _restoreFromFile() async {
@@ -93,7 +68,6 @@ class _BackupScreenState extends State<BackupScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Backup restored successfully')),
         );
-        await _refreshList();
       }
     } catch (e) {
       if (mounted) {
@@ -102,34 +76,6 @@ class _BackupScreenState extends State<BackupScreen> {
         );
       }
     }
-  }
-
-  Future<void> _deleteBackup(File file) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        title: const Text('Delete Backup',
-            style: TextStyle(color: AppTheme.onSurface)),
-        content: Text(
-          'Delete ${file.path.split('/').last}?',
-          style: const TextStyle(color: AppTheme.muted),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete',
-                style: TextStyle(color: AppTheme.danger)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true || !mounted) return;
-    await context.read<BackupProvider>().deleteBackup(file.path);
-    await _refreshList();
   }
 
   @override
@@ -291,146 +237,10 @@ class _BackupScreenState extends State<BackupScreen> {
             ),
           ),
 
-          // ── Saved backups ─────────────────────────────────────
-          _SectionHeader(title: 'Saved Backups'),
-          if (_loadingList)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: CircularProgressIndicator(color: AppTheme.primary)),
-            )
-          else if (_savedBackups.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: AppTheme.surface,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Center(
-                  child: Text('No backups yet',
-                      style: TextStyle(color: AppTheme.muted, fontSize: 14)),
-                ),
-              ),
-            )
-          else
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppTheme.surface,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  children: _savedBackups.asMap().entries.map((entry) {
-                    final i = entry.key;
-                    final file = entry.value;
-                    final name = file.path.split('/').last;
-                    final stat = file.statSync();
-                    final sizeKb = (stat.size / 1024).toStringAsFixed(1);
-                    return Column(
-                      children: [
-                        if (i > 0) const Divider(color: Color(0xFF2A3A4A), height: 1),
-                        ListTile(
-                          leading: const Icon(Icons.folder_zip_rounded,
-                              color: AppTheme.primary, size: 26),
-                          title: Text(name,
-                              style: const TextStyle(
-                                  color: AppTheme.onSurface,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis),
-                          subtitle: Text('$sizeKb KB · ${_formatDateTime(stat.modified)}',
-                              style: const TextStyle(
-                                  color: AppTheme.muted, fontSize: 11)),
-                          trailing: PopupMenuButton<String>(
-                            color: AppTheme.surface,
-                            icon: const Icon(Icons.more_vert_rounded,
-                                color: AppTheme.muted, size: 20),
-                            onSelected: (action) {
-                              if (action == 'export') _exportBackup(file);
-                              if (action == 'restore') {
-                                _confirmRestoreFile(file.path);
-                              }
-                              if (action == 'delete') _deleteBackup(file);
-                            },
-                            itemBuilder: (_) => [
-                              const PopupMenuItem(
-                                  value: 'export',
-                                  child: Row(children: [
-                                    Icon(Icons.share_rounded, size: 18, color: AppTheme.primary),
-                                    SizedBox(width: 10),
-                                    Text('Export'),
-                                  ])),
-                              const PopupMenuItem(
-                                  value: 'restore',
-                                  child: Row(children: [
-                                    Icon(Icons.restore_rounded, size: 18, color: AppTheme.accent),
-                                    SizedBox(width: 10),
-                                    Text('Restore this'),
-                                  ])),
-                              const PopupMenuItem(
-                                  value: 'delete',
-                                  child: Row(children: [
-                                    Icon(Icons.delete_rounded, size: 18, color: AppTheme.danger),
-                                    SizedBox(width: 10),
-                                    Text('Delete', style: TextStyle(color: AppTheme.danger)),
-                                  ])),
-                            ],
-                          ),
-                        ),
-                      ],
-                    );
-                  }).toList(),
-                ),
-              ),
-            ),
           const SizedBox(height: 24),
         ],
       ),
     );
-  }
-
-  Future<void> _confirmRestoreFile(String path) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        title: const Text('Restore Backup',
-            style: TextStyle(color: AppTheme.onSurface)),
-        content: const Text(
-          'This will merge the backup into your current chats.',
-          style: TextStyle(color: AppTheme.muted),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Restore',
-                style: TextStyle(
-                    color: AppTheme.primary, fontWeight: FontWeight.w700)),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true || !mounted) return;
-    try {
-      await context.read<BackupProvider>().restore(path);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Restored successfully')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Restore failed: $e')),
-        );
-      }
-    }
   }
 
   String _formatDateTime(DateTime dt) {
